@@ -8,7 +8,7 @@ A halo2 implementation of on-chain DCAP attestation verification
 * get certificate chain, signatures, and the data we want to check its sign from SGX Attestation
 * base64 decode certificate from PEM format into bytes
 * get public key and signature from certificate bytes
-* transform keys, signatures from Big Endian into Litter Endian
+* transform keys, signatures from Big Endian into Little Endian
 * convert AssignedValue into CRTInteger as we need to use ECDSA chip
 * get sha256 of the data to be checked using sha256chip
 * the output of sha256chip is bytes of the hash, convert the bytes to crtinteger values
