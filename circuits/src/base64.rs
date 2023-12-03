@@ -471,7 +471,6 @@ impl<F: PrimeField> Circuit<F> for Base64Circuit<F> {
                     4,
                 );
                 
-                // FIXME (xiaowentao) expected 1, but for now this implementation is wrong so just skip it
                 fp_chip.gate().assert_is_const(ctx, &ecdsa, F::one());
 
                 // IMPORTANT: this copies cells to the lookup advice column to perform range check lookups
