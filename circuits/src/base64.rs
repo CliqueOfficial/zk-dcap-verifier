@@ -397,13 +397,15 @@ impl<F: PrimeField> Circuit<F> for Base64Circuit<F> {
                 Ok(())
             },
         )?;
+        // the output of sha256 is big-endian
         // println!("Assigned hash cells: {:?}", assigned_hash_cells);
  
+        // NOTE (xiaowentao) All the values must be Little-Endian
         let pubkey_x_base = Fp::from_bytes(&[25, 122, 102, 10, 107, 161, 208, 37, 40, 103, 230, 212, 217, 201, 219, 37, 243, 21, 148, 231, 81, 156, 37, 255, 173, 53, 17, 65, 57, 1, 131, 41]).unwrap();
         let pubkey_y_base = Fp::from_bytes(&[61, 92, 233, 152, 97, 160, 133, 116, 50, 175, 252, 245, 58, 47, 19, 241, 229, 38, 133, 160, 239, 55, 223, 203, 39, 166, 219, 23, 138, 241, 140, 84]).unwrap();
         let pubkey_point: Option<Secp256r1Affine> = Secp256r1Affine::from_xy(pubkey_x_base, pubkey_y_base).into();
         // sha256 result of qeReport (attestation[436+128:436+512])
-        let msghash: Option<Fq> = <Secp256r1Affine as CurveAffine>::ScalarExt::from_bytes(&[217, 176, 175, 183, 79, 150, 115, 227, 28, 247, 165, 87, 87, 180, 1, 229, 111, 180, 86, 125, 182, 78, 233, 115, 177, 253, 8, 209, 4, 114, 190, 213]).into();
+        let msghash: Option<Fq> = <Secp256r1Affine as CurveAffine>::ScalarExt::from_bytes(&[213, 190, 114, 4, 209, 8, 253, 177, 115, 233, 78, 182, 125, 86, 180, 111, 229, 1, 180, 87, 87, 165, 247, 28, 227, 115, 150, 79, 183, 175, 176, 217]).into();
         // qeReportSig (attestation[436+512:436+576])
         let r_point: Option<Fq> = <Secp256r1Affine as CurveAffine>::ScalarExt::from_bytes(&[85, 11, 117, 70, 141, 121, 224, 181, 11, 22, 189, 36, 53, 164, 196, 215, 128, 241, 3, 3, 78, 217, 25, 34, 39, 31, 169, 113, 138, 231, 85, 42]).into();
         let s_point: Option<Fq> = <Secp256r1Affine as CurveAffine>::ScalarExt::from_bytes(&[41, 142, 197, 233, 154, 110, 18, 217, 14, 60, 22, 79, 26, 131, 37, 102, 35, 30, 143, 208, 8, 164, 25, 160, 36, 86, 192, 101, 211, 255, 243, 6]).into();
@@ -470,7 +472,7 @@ impl<F: PrimeField> Circuit<F> for Base64Circuit<F> {
                 );
                 
                 // FIXME (xiaowentao) expected 1, but for now this implementation is wrong so just skip it
-                fp_chip.gate().assert_is_const(ctx, &ecdsa, F::zero());
+                fp_chip.gate().assert_is_const(ctx, &ecdsa, F::one());
 
                 // IMPORTANT: this copies cells to the lookup advice column to perform range check lookups
                 // This is not optional.

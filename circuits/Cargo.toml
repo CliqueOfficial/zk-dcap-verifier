@@ -5,14 +5,14 @@ edition = "2021"
 
 
 [dependencies]
-halo2-base = { branch = "main", default-features = false, features = ["halo2-pse", "display"], git = "https://github.com/zkwebauthn/halo2-lib.git" }
-halo2-ecc = { branch = "main", default-features = false, features = ["halo2-pse", "display"], git = "https://github.com/zkwebauthn/halo2-lib.git" }
+halo2-base = { rev = "4c1e704", default-features = false, features = ["halo2-pse", "display"], git = "https://github.com/CliqueOfficial/halo2-lib-zkwebauthn.git" }
+halo2-ecc = { rev = "4c1e704", default-features = false, features = ["halo2-pse", "display"], git = "https://github.com/CliqueOfficial/halo2-lib-zkwebauthn.git" }
 plotters = { version = "0.3.0", optional = true }
 tabbycat = { version = "0.1", features = ["attributes"], optional = true }
 base64 = "0.21"
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
-halo2-dynamic-sha256 = { git = "https://github.com/dcmmc/halo2-dynamic-sha256.git", branch = "main" }
+halo2-dynamic-sha256 = { git = "https://github.com/dcmmc/halo2-dynamic-sha256.git", rev = "6339fde" }
 
 rand_chacha = "0.3.1"
 json = "0.12.4"

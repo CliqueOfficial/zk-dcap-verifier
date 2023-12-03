@@ -590,7 +590,7 @@ dependencies = [
 [[package]]
 name = "halo2-base"
 version = "0.2.2"
-source = "git+https://github.com/zkwebauthn/halo2-lib.git?branch=main#7be174c7cf28ea0c2b0506fc030e1058be6e44ca"
+source = "git+https://github.com/CliqueOfficial/halo2-lib-zkwebauthn.git?rev=4c1e704#4c1e704546fddefea1e36108d970d47c57fd9254"
 dependencies = [
  "ff",
  "halo2_proofs",
@@ -624,7 +624,7 @@ dependencies = [
 [[package]]
 name = "halo2-dynamic-sha256"
 version = "0.1.0"
-source = "git+https://github.com/dcmmc/halo2-dynamic-sha256.git?branch=main#f95fa94eba71c0dd58368287b354cfc21d6daf9c"
+source = "git+https://github.com/dcmmc/halo2-dynamic-sha256.git?rev=6339fde#6339fde928244f78355e31371a5aa9a6b3088714"
 dependencies = [
  "generic-array",
  "halo2-base",
@@ -640,7 +640,7 @@ dependencies = [
 [[package]]
 name = "halo2-ecc"
 version = "0.2.2"
-source = "git+https://github.com/zkwebauthn/halo2-lib.git?branch=main#7be174c7cf28ea0c2b0506fc030e1058be6e44ca"
+source = "git+https://github.com/CliqueOfficial/halo2-lib-zkwebauthn.git?rev=4c1e704#4c1e704546fddefea1e36108d970d47c57fd9254"
 dependencies = [
  "ff",
  "group",
