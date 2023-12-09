@@ -636,9 +636,8 @@ mod tests {
 
     use super::*;
 
-    // TODO: set an offset in the email for the bh= and see what happens
     #[test]
-    fn test_sgx_dcap_verifier_decode_pass() {
+    fn test_sgx_dcap_verifier_pass() {
         let k = 17; // 8, 128, etc
 
         // Convert query string to u128s
@@ -715,30 +714,4 @@ mod tests {
 
         // Assert the 33rd pos is 0
     }
-
-    // #[test]
-    // fn test_sgx_dcap_verifier_decode_fail() {
-    //     let k = 10;
-
-    //     // Convert query string to u128s
-    //     let characters: Vec<u128> = "charcount+not+div+by+4"
-    //         .chars()
-    //         .map(|c| c as u32 as u128)
-    //         .collect();
-
-    //     assert_eq!(characters.len(), SHAHASH_sgx_dcap_verifier_STRING_LEN);
-
-    //     // Out-of-range `value = 8`
-    //     let circuit = SgxDcapVerifierCircuit::<Fp> {
-    //         characters: characters,
-    //         _marker: PhantomData,
-    //     };
-    //     let prover = MockProver::run(k, &circuit, vec![]).unwrap();
-    //     match prover.verify() {
-    //         Err(e) => {
-    //             println!("Error successfully achieved!");
-    //         }
-    //         _ => assert_eq!(1, 0),
-    //     }
-    // }
 }
