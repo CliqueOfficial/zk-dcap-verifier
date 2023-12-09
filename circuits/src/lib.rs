@@ -1,3 +1,3 @@
-pub mod base64;
+pub mod sgx_dcap_verifier;
 pub mod table;
-pub use crate::base64::*;
+pub use crate::sgx_dcap_verifier::*;

@@ -1,27 +1,26 @@
 #![allow(non_snake_case)]
 // use halo2::halo2curves::bn256::G1Affine;
-use base64::{
-    alphabet,
-    engine::{self, general_purpose},
-    Engine as _,
-};
-use ark_std::{end_timer, start_timer};
-use halo2_base::{halo2_proofs::{
-    circuit::{AssignedCell, Layouter, Region, SimpleFloorPlanner, Value},
-    plonk::{
-        Advice, Assigned, Circuit, Column, ConstraintSystem, Constraints, Error, Expression,
-        Instance, Selector,
+use base64::{engine::general_purpose, Engine};
+use halo2_base::{
+    halo2_proofs::{
+        circuit::{AssignedCell, Layouter, Region, SimpleFloorPlanner, Value},
+        plonk::{
+            Advice, Circuit, Column, ConstraintSystem, Error, Expression,
+            Selector,
+        },
+        poly::Rotation, halo2curves::{secp256r1::{Fp, Secp256r1Affine, Fq}, CurveAffine},
     },
-    poly::Rotation, halo2curves::{secp256r1::{Fp, Secp256r1Affine, Fq}, CurveAffine},
-}, gates::range::RangeStrategy::Vertical, SKIP_FIRST_PASS, AssignedValue, gates::{GateInstructions, range::RangeConfig}, QuantumCell, utils::{biguint_to_fe, fe_to_bigint}};
+    gates::range::RangeStrategy::Vertical, SKIP_FIRST_PASS, AssignedValue,
+    gates::{GateInstructions, range::RangeConfig}, QuantumCell, utils::biguint_to_fe
+};
 use halo2_ecc::{
     ecc::{ecdsa::ecdsa_verify_no_pubkey_check, EccChip},
     fields::{fp::{FpStrategy, FpConfig}, FieldChip},
 };
 use halo2_base::utils::modulus;
-use num_bigint::{BigUint, BigInt};
+use num_bigint::BigUint;
 use regex::Regex;
-use std::{fs::File, collections::hash_map, cmp::min};
+use std::fs::File;
 use serde::{Deserialize, Serialize};
 use std::env::var;
 use halo2_base::utils::PrimeField;
@@ -36,7 +35,7 @@ const SHAHASH_BASE64_STRING_LEN: usize = 1696;
 const BIT_DECOMPOSITION_ADVICE_COL_COUNT: usize = 12;
 
 #[derive(Debug, Clone)]
-pub struct AssignedBase64Result<F: PrimeField> {
+pub struct AssignedSgxDcapVerifierResult<F: PrimeField> {
     pub encoded: Vec<AssignedCell<F, F>>,
     pub decoded: Vec<AssignedCell<F, F>>,
 }
@@ -57,7 +56,7 @@ type FpChip<F> = FpConfig<F, Fp>;
 
 // Here we decompose a transition into 3-value lookups.
 #[derive(Debug, Clone)]
-pub struct Base64Config<F: PrimeField> {
+pub struct SgxDcapVerifierConfig<F: PrimeField> {
     encoded_chars: Column<Advice>, // This is the raw ASCII character value -- like 'a' would be 97
     bit_decompositions: [Column<Advice>; BIT_DECOMPOSITION_ADVICE_COL_COUNT],
     decoded_chars: Column<Advice>, // This has a 1 char gap between each group of 3 chars
@@ -69,7 +68,7 @@ pub struct Base64Config<F: PrimeField> {
     _marker: PhantomData<F>,
 }
 
-impl<F: PrimeField> Base64Config<F> {
+impl<F: PrimeField> SgxDcapVerifierConfig<F> {
     const MAX_BYTE_SIZE1: usize = 128;
     const MAX_BYTE_SIZE2: usize = 128;
     const NUM_ADVICE: usize = 3;
@@ -87,7 +86,7 @@ impl<F: PrimeField> Base64Config<F> {
         bit_lookup_cols: Vec<usize>,
         selector_col: Selector,
     ) -> Option<bool> {
-        meta.lookup("lookup base64 encode/decode", |meta| {
+        meta.lookup("lookup sgx_dcap_verifier encode/decode", |meta| {
             assert!(bit_query_cols.len() == bit_lookup_cols.len());
             let q = meta.query_selector(selector_col);
 
@@ -237,15 +236,15 @@ impl<F: PrimeField> Base64Config<F> {
     }
 }
 #[derive(Default, Clone)]
-pub struct Base64Circuit<F: PrimeField> {
+pub struct SgxDcapVerifierCircuit<F: PrimeField> {
     // Since this is only relevant for the witness, we can opt to make this whatever convenient type we want
-    pub base64_encoded_string: Vec<u8>,
+    pub sgx_dcap_verifier_encoded_string: Vec<u8>,
     _marker: PhantomData<F>,
 }
 
-impl<F: PrimeField> Base64Circuit<F> {
+impl<F: PrimeField> SgxDcapVerifierCircuit<F> {
     // Note that the two types of region.assign_advice calls happen together so that it is the same region
-    fn base64_assign_values(
+    fn sgx_dcap_verifier_assign_values(
         &self,
         region: &mut Region<F>,
         characters: &[u8],
@@ -255,7 +254,7 @@ impl<F: PrimeField> Base64Circuit<F> {
         decoded_chars_without_gap: Column<Advice>,
         bit_decomposition_table: BitDecompositionTableConfig<F>,
         q_decode_selector: Selector
-    ) -> Result<AssignedBase64Result<F>, Error> {
+    ) -> Result<AssignedSgxDcapVerifierResult<F>, Error> {
         let mut assigned_encoded_values = Vec::new();
         let mut assigned_decoded_values = Vec::new();
 
@@ -263,7 +262,7 @@ impl<F: PrimeField> Base64Circuit<F> {
         let res_decoded_chars: Vec<u8> = general_purpose::STANDARD
             .decode(characters)
             .expect(&format!(
-                "{:?} is an invalid base64 string bytes",
+                "{:?} is an invalid sgx_dcap_verifier string bytes",
                 characters
             ));
         for i in 0..res_decoded_chars.len() {
@@ -310,7 +309,7 @@ impl<F: PrimeField> Base64Circuit<F> {
             q_decode_selector.enable(region, i)?;
         }
         // println!("Decoded chars: {:?}", decoded_chars);
-        let result = AssignedBase64Result {
+        let result = AssignedSgxDcapVerifierResult {
             encoded: assigned_encoded_values,
             decoded: assigned_decoded_values,
         };
@@ -318,14 +317,14 @@ impl<F: PrimeField> Base64Circuit<F> {
     }
 }
 
-impl<F: PrimeField> Circuit<F> for Base64Circuit<F> {
-    type Config = Base64Config<F>;
+impl<F: PrimeField> Circuit<F> for SgxDcapVerifierCircuit<F> {
+    type Config = SgxDcapVerifierConfig<F>;
     type FloorPlanner = SimpleFloorPlanner;
 
     // Circuit without witnesses, called only during key generation
     fn without_witnesses(&self) -> Self {
         Self {
-            base64_encoded_string: vec![],
+            sgx_dcap_verifier_encoded_string: vec![],
             _marker: PhantomData,
         }
     }
@@ -333,7 +332,7 @@ impl<F: PrimeField> Circuit<F> for Base64Circuit<F> {
     fn configure(meta: &mut ConstraintSystem<F>) -> Self::Config {
         // let encoded_chars = meta.advice_column();
         // TODO Set an offset to encoded_chars
-        let config = Base64Config::configure(meta);
+        let config = SgxDcapVerifierConfig::configure(meta);
         config
     }
 
@@ -360,11 +359,11 @@ impl<F: PrimeField> Circuit<F> for Base64Circuit<F> {
 
         let flex_config = sha256.range().clone().gate;
 
-        // leaf certificate base64 decoded result
+        // leaf certificate sgx_dcap_verifier decoded result
         let leaf_cert = layouter.assign_region(
             || "Assign all values",
-            |mut region| self.base64_assign_values(
-                &mut region, &self.base64_encoded_string,
+            |mut region| self.sgx_dcap_verifier_assign_values(
+                &mut region, &self.sgx_dcap_verifier_encoded_string,
                 config.encoded_chars,
                 config.bit_decompositions,
                 config.decoded_chars,
@@ -460,7 +459,7 @@ impl<F: PrimeField> Circuit<F> for Base64Circuit<F> {
                 // sha256 result of qeReport (attestation[436+128:436+512])
                 // let msghash: Option<Fq> = <Secp256r1Affine as CurveAffine>::ScalarExt::from_bytes(&[213, 190, 114, 4, 209, 8, 253, 177, 115, 233, 78, 182, 125, 86, 180, 111, 229, 1, 180, 87, 87, 165, 247, 28, 227, 115, 150, 79, 183, 175, 176, 217]).into();
                 let msghash_array: [u8; 32] = hash_bytes_u8.clone().try_into().unwrap_or_else(
-                    |v| panic!("failed to convert vec to array")
+                    |_| panic!("failed to convert vec to array")
                 );
                 let msghash: Option<Fq> = <Secp256r1Affine as CurveAffine>::ScalarExt::from_bytes(&msghash_array).into();
                 // qeReportSig (attestation[436+512:436+576])
@@ -483,7 +482,7 @@ impl<F: PrimeField> Circuit<F> for Base64Circuit<F> {
                         ).unwrap())).map_or(Value::unknown(), Value::known)
                     ), QuantumCell::Constant(F::one()))
                 ).collect();
-                // euality constraints for leaf cert base64 decoded bytes
+                // euality constraints for leaf cert sgx_dcap_verifier decoded bytes
                 for (leaf_cert_byte, leaf_cert_byte_assigned) in leaf_cert.decoded.clone().iter().zip(
                     leaf_cert_assigned.iter()) {
                         ctx.region.constrain_equal(leaf_cert_byte.cell(), leaf_cert_byte_assigned.cell()).unwrap();
@@ -532,10 +531,10 @@ impl<F: PrimeField> Circuit<F> for Base64Circuit<F> {
                 };
 
                 let pubkey_x_base = Fp::from_bytes(&pubkey_x_bytes.try_into().unwrap_or_else(
-                    |v| panic!("failed to convert vec to array")
+                    |_| panic!("failed to convert vec to array")
                 )).unwrap();
                 let pubkey_y_base = Fp::from_bytes(&pubkey_y_bytes.try_into().unwrap_or_else(
-                    |v| panic!("failed to convert vec to array")
+                    |_| panic!("failed to convert vec to array")
                 )).unwrap();
                 let pubkey_point: Option<Secp256r1Affine> = Secp256r1Affine::from_xy(pubkey_x_base, pubkey_y_base).into();
                     
@@ -625,18 +624,21 @@ impl<F: PrimeField> Circuit<F> for Base64Circuit<F> {
 #[cfg(test)]
 mod tests {
     use halo2_base::{halo2_proofs::{
-        circuit::floor_planner::V1,
-        dev::{CircuitCost, FailureLocation, MockProver, VerifyFailure},
-        halo2curves::{bn256::{Fr, G1, Bn256, G1Affine}, pasta::pallas::Base},
-        plonk::{Any, Circuit, create_proof, keygen_vk, keygen_pk, verify_proof}, transcript::{Blake2bWrite, Challenge255, TranscriptWriterBuffer, Blake2bRead, TranscriptReadBuffer}, poly::{kzg::{commitment::KZGCommitmentScheme, multiopen::{ProverSHPLONK, VerifierSHPLONK}, strategy::SingleStrategy}, commitment::ParamsProver},
+        dev::MockProver,
+        halo2curves::bn256::{Fr, Bn256, G1Affine},
+        plonk::{create_proof, keygen_vk, keygen_pk, verify_proof},
+        transcript::{Blake2bWrite, Challenge255, TranscriptWriterBuffer, Blake2bRead, TranscriptReadBuffer},
+        poly::{kzg::{commitment::KZGCommitmentScheme, multiopen::{ProverSHPLONK, VerifierSHPLONK}, strategy::SingleStrategy},
+        commitment::ParamsProver},
     }, utils::fs::gen_srs};
     use rand_chacha::rand_core::OsRng;
+    use ark_std::{end_timer, start_timer};
 
     use super::*;
 
     // TODO: set an offset in the email for the bh= and see what happens
     #[test]
-    fn test_base64_decode_pass() {
+    fn test_sgx_dcap_verifier_decode_pass() {
         let k = 17; // 8, 128, etc
 
         // Convert query string to u128s
@@ -648,17 +650,17 @@ mod tests {
 
         // Decode characters
         assert_eq!(characters.len(), SHAHASH_BASE64_STRING_LEN);
-        #[allow(deprecated)]
-        let chars: Vec<char> = base64::decode(characters.clone())
-            .unwrap()
-            .iter()
-            .map(|&b| b as char)
-            .collect();
+        // #[allow(deprecated)]
+        // let chars: Vec<char> = base64::decode(characters.clone())
+        //     .unwrap()
+        //     .iter()
+        //     .map(|&b| b as char)
+        //     .collect();
         // print!("Decoded chars: {:?}", chars);
 
         // Successful cases
-        let circuit = Base64Circuit::<Fr> {
-            base64_encoded_string: characters,
+        let circuit = SgxDcapVerifierCircuit::<Fr> {
+            sgx_dcap_verifier_encoded_string: characters,
             _marker: PhantomData,
         };
 
@@ -667,7 +669,7 @@ mod tests {
             Err(e) => panic!("Error: {:?}", e),
         };
         prover.assert_satisfied();
-        // CircuitCost::<G1, Base64Circuit<Fr>>::measure((k as u128).try_into().unwrap(), &circuit);
+        // CircuitCost::<G1, SgxDcapVerifierCircuit<Fr>>::measure((k as u128).try_into().unwrap(), &circuit);
         // .proof_size(2);
 
         let params_time = start_timer!(|| "Time elapsed in circuit & params construction");
@@ -692,7 +694,7 @@ mod tests {
             Challenge255<G1Affine>,
             _,
             Blake2bWrite<Vec<u8>, G1Affine, Challenge255<G1Affine>>,
-            Base64Circuit<Fr>,
+            SgxDcapVerifierCircuit<Fr>,
         >(&params, &pk, &[circuit], &[&[]], &mut rng, &mut transcript).unwrap();
         let proof = transcript.finalize();
         end_timer!(proof_time);
@@ -715,7 +717,7 @@ mod tests {
     }
 
     // #[test]
-    // fn test_base64_decode_fail() {
+    // fn test_sgx_dcap_verifier_decode_fail() {
     //     let k = 10;
 
     //     // Convert query string to u128s
@@ -724,10 +726,10 @@ mod tests {
     //         .map(|c| c as u32 as u128)
     //         .collect();
 
-    //     assert_eq!(characters.len(), SHAHASH_BASE64_STRING_LEN);
+    //     assert_eq!(characters.len(), SHAHASH_sgx_dcap_verifier_STRING_LEN);
 
     //     // Out-of-range `value = 8`
-    //     let circuit = Base64Circuit::<Fp> {
+    //     let circuit = SgxDcapVerifierCircuit::<Fp> {
     //         characters: characters,
     //         _marker: PhantomData,
     //     };
