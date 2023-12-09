@@ -612,6 +612,7 @@ dependencies = [
  "halo2-ecc",
  "json",
  "lazy_static",
+ "num-bigint",
  "once_cell",
  "plotters",
  "rand",

@@ -11,13 +11,14 @@ use halo2_base::{halo2_proofs::{
         Instance, Selector,
     },
     poly::Rotation, halo2curves::{secp256r1::{Fp, Secp256r1Affine, Fq}, CurveAffine},
-}, gates::range::RangeStrategy::Vertical, SKIP_FIRST_PASS, AssignedValue, gates::{GateInstructions, range::RangeConfig}};
+}, gates::{range::RangeStrategy::Vertical, flex_gate::{FlexGateConfig, GateStrategy}}, SKIP_FIRST_PASS, AssignedValue, gates::{GateInstructions, range::RangeConfig}, Context, ContextParams, utils::{bigint_to_fe, biguint_to_fe, fe_to_bigint, fe_to_biguint, value_to_option}, QuantumCell};
 use halo2_ecc::{
     ecc::{ecdsa::ecdsa_verify_no_pubkey_check, EccChip},
     fields::{fp::{FpStrategy, FpConfig}, FieldChip},
 };
 use halo2_base::utils::modulus;
-use std::{fs::File, collections::hash_map};
+use num_bigint::BigUint;
+use std::{fs::File, collections::hash_map, hash};
 use serde::{Deserialize, Serialize};
 use std::env::var;
 use halo2_base::utils::PrimeField;
@@ -62,6 +63,7 @@ pub struct Base64Config<F: PrimeField> {
     q_decode_selector: Selector,
     fp_config: FpConfig<F, Fp>,
     sha256_config: Sha256DynamicConfig<F>,
+    flex_config: FlexGateConfig<F>,
     _marker: PhantomData<F>,
 }
 
@@ -179,7 +181,7 @@ impl<F: PrimeField> Base64Config<F> {
             Self::NUM_FIXED,
             Self::LOOKUP_BITS,
             0,
-            17,
+            19,
         );
         // let hash_column = meta.instance_column();
         // meta.enable_equality(hash_column);
@@ -192,6 +194,15 @@ impl<F: PrimeField> Base64Config<F> {
             true,
         );
 
+        let flex_config = FlexGateConfig::configure(
+            meta,
+            GateStrategy::Vertical,
+            &[Self::NUM_ADVICE],
+            Self::NUM_FIXED,
+            0,
+            19
+        );
+
         let config = Self {
             encoded_chars,
             bit_decompositions: bit_decompositions.try_into().unwrap(),
@@ -201,6 +212,7 @@ impl<F: PrimeField> Base64Config<F> {
             q_decode_selector,
             fp_config,
             sha256_config,
+            flex_config,
             _marker: PhantomData,
         };
         // Create bit lookup for each 6-bit encoded value
@@ -354,6 +366,8 @@ impl<F: PrimeField> Circuit<F> for Base64Circuit<F> {
         sha256.range().load_lookup_table(&mut layouter)?;
         sha256.load(&mut layouter)?;
 
+        let flex_config = config.flex_config;
+
         let base64_result = layouter.assign_region(
             || "Assign all values",
             |mut region| self.base64_assign_values(
@@ -367,48 +381,25 @@ impl<F: PrimeField> Circuit<F> for Base64Circuit<F> {
             ),
         )?;
         let mut first_pass = SKIP_FIRST_PASS;
+        // println!("based64: {:?}", &base64_result.decoded[323..323+12]);
+        let pubkey_x = &base64_result.decoded[335..335+32];
+        let pubkey_y = &base64_result.decoded[335+32..335+64];
+        // println!("pubkey_x: {:?}", pubkey_x);
 
-        let mut assigned_hash_cells = vec![];
+        // let mut assigned_hash_cells = vec![];
         let range = sha256.range().clone();
         let qe_report: Vec<u8> = vec![8, 9, 14, 13, 255, 255, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 21, 0, 0, 0, 0, 0, 0, 0, 231, 0, 0, 0, 0, 0, 0, 0, 206, 29, 168, 154, 193, 245, 74, 128, 114, 87, 196, 229, 124, 120, 20, 12, 188, 102, 82, 212, 213, 135, 214, 15, 5, 131, 18, 90, 39, 146, 190, 112, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 140, 79, 87, 117, 215, 150, 80, 62, 150, 19, 127, 119, 198, 138, 130, 154, 0, 86, 172, 141, 237, 112, 20, 11, 8, 27, 9, 68, 144, 197, 123, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 9, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 9, 188, 124, 79, 211, 205, 227, 97, 238, 49, 224, 32, 91, 56, 220, 72, 241, 138, 165, 234, 97, 86, 191, 147, 42, 38, 34, 143, 92, 197, 56, 135, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
-        layouter.assign_region(
-            || "dynamic sha2",
-            |region| {
-                if first_pass {
-                    first_pass = false;
-                    return Ok(());
-                }
-
-                let ctx = &mut sha256.new_context(region);
-                let result0 = sha256.digest(
-                    ctx,
-                    &qe_report,
-                    Some(384),
-                )?;
-                assigned_hash_cells
-                    .append(&mut result0.output_bytes.into_iter().map(|v| v.value.clone()).collect());
-                range.finalize(ctx);
-                // {
-                //     println!("total advice cells: {}", ctx.total_advice);
-                //     let const_rows = ctx.total_fixed + 1;
-                //     println!("maximum rows used by a fixed column: {const_rows}");
-                //     println!("lookup cells used: {}", ctx.cells_to_lookup.len());
-                // }
-                Ok(())
-            },
-        )?;
-        // the output of sha256 is big-endian
-        // println!("Assigned hash cells: {:?}", assigned_hash_cells);
  
         // NOTE (xiaowentao) All the values must be Little-Endian
         let pubkey_x_base = Fp::from_bytes(&[25, 122, 102, 10, 107, 161, 208, 37, 40, 103, 230, 212, 217, 201, 219, 37, 243, 21, 148, 231, 81, 156, 37, 255, 173, 53, 17, 65, 57, 1, 131, 41]).unwrap();
         let pubkey_y_base = Fp::from_bytes(&[61, 92, 233, 152, 97, 160, 133, 116, 50, 175, 252, 245, 58, 47, 19, 241, 229, 38, 133, 160, 239, 55, 223, 203, 39, 166, 219, 23, 138, 241, 140, 84]).unwrap();
         let pubkey_point: Option<Secp256r1Affine> = Secp256r1Affine::from_xy(pubkey_x_base, pubkey_y_base).into();
         // sha256 result of qeReport (attestation[436+128:436+512])
-        let msghash: Option<Fq> = <Secp256r1Affine as CurveAffine>::ScalarExt::from_bytes(&[213, 190, 114, 4, 209, 8, 253, 177, 115, 233, 78, 182, 125, 86, 180, 111, 229, 1, 180, 87, 87, 165, 247, 28, 227, 115, 150, 79, 183, 175, 176, 217]).into();
+        let msghash_tmp: Option<Fq> = <Secp256r1Affine as CurveAffine>::ScalarExt::from_bytes(&[213, 190, 114, 4, 209, 8, 253, 177, 115, 233, 78, 182, 125, 86, 180, 111, 229, 1, 180, 87, 87, 165, 247, 28, 227, 115, 150, 79, 183, 175, 176, 217]).into();
         // qeReportSig (attestation[436+512:436+576])
         let r_point: Option<Fq> = <Secp256r1Affine as CurveAffine>::ScalarExt::from_bytes(&[85, 11, 117, 70, 141, 121, 224, 181, 11, 22, 189, 36, 53, 164, 196, 215, 128, 241, 3, 3, 78, 217, 25, 34, 39, 31, 169, 113, 138, 231, 85, 42]).into();
         let s_point: Option<Fq> = <Secp256r1Affine as CurveAffine>::ScalarExt::from_bytes(&[41, 142, 197, 233, 154, 110, 18, 217, 14, 60, 22, 79, 26, 131, 37, 102, 35, 30, 143, 208, 8, 164, 25, 160, 36, 86, 192, 101, 211, 255, 243, 6]).into();
+        println!("msghash_tmp: {:?}", msghash_tmp.unwrap());
 
         layouter.assign_region(
             || "ECDSA",
@@ -421,6 +412,29 @@ impl<F: PrimeField> Circuit<F> for Base64Circuit<F> {
                 let mut aux = fp_chip.new_context(region);
                 let ctx = &mut aux;
 
+                let result0 = sha256.digest(
+                    ctx,
+                    &qe_report,
+                    Some(384),
+                )?;
+                let hash_bytes: Vec<QuantumCell<'_, '_, F>> = result0.output_bytes.into_iter().map(
+                    |v| QuantumCell::ExistingOwned(v)).collect();
+                range.finalize(ctx);
+
+                // big-endian
+                // load constants from [2^248, 2^240, ..., 2^8, 2^0]
+                let coffes = (0..32).map(|i| QuantumCell::Constant(
+                    biguint_to_fe(&BigUint::from(2u32).pow(248 - 8 * i)))).collect::<Vec<_>>();
+                println!("hash_bytes: {:?}\n{:?}\n", &hash_bytes[..], hash_bytes.len());
+                println!("coffs: {:?}\n{:?}\n", &coffes[..], coffes.len());
+
+                let (inter, msghash) = flex_config.inner_product_simple_with_assignments(
+                    ctx, coffes, hash_bytes);
+                println!("inter: {:?}\n{:?}\n", inter, inter.len());
+                println!("msghash: {:?}", msghash);
+
+                let msghash_bigint = fe_to_bigint(value_to_option(msghash.value()).unwrap());
+
                 let (r_assigned, s_assigned, m_assigned) = {
                     let fq_chip = FpConfig::<F, Fq>::construct(
                         fp_chip.range.clone(),
@@ -432,8 +446,13 @@ impl<F: PrimeField> Circuit<F> for Base64Circuit<F> {
                     let m_assigned = fq_chip.load_private(
                         ctx,
                         FpConfig::<F, Fq>::fe_to_witness(
-                            &msghash.map_or(Value::unknown(), Value::known),
+                            &msghash_tmp.map_or(Value::unknown(), Value::known),
                         ),
+                    );
+                    println!("true m_assigned: {:?} {:?}", m_assigned.native, m_assigned.truncation);
+
+                    let m_assigned = fq_chip.load_private(
+                        ctx, Some(msghash_bigint).map_or(Value::unknown(), Value::known)
                     );
 
                     let r_assigned = fq_chip.load_private(
@@ -477,8 +496,6 @@ impl<F: PrimeField> Circuit<F> for Base64Circuit<F> {
                 // This is not optional.
                 fp_chip.finalize(ctx);
 
-                println!("ECDSA res {ecdsa:?}");
-
                 #[cfg(feature = "display")]
                 if self.r.is_some() {
                     println!("ECDSA res {ecdsa:?}");
@@ -508,7 +525,7 @@ mod tests {
     // TODO: set an offset in the email for the bh= and see what happens
     #[test]
     fn test_base64_decode_pass() {
-        let k = 17; // 8, 128, etc
+        let k = 20; // 8, 128, etc
 
         // Convert query string to u128s
         // "R0g=""
