@@ -1,9 +1,11 @@
+#![allow(non_snake_case)]
 // use halo2::halo2curves::bn256::G1Affine;
 use base64::{
     alphabet,
     engine::{self, general_purpose},
     Engine as _,
 };
+use ark_std::{end_timer, start_timer};
 use halo2_base::{halo2_proofs::{
     circuit::{AssignedCell, Layouter, Region, SimpleFloorPlanner, Value},
     plonk::{
@@ -11,14 +13,15 @@ use halo2_base::{halo2_proofs::{
         Instance, Selector,
     },
     poly::Rotation, halo2curves::{secp256r1::{Fp, Secp256r1Affine, Fq}, CurveAffine},
-}, gates::{range::RangeStrategy::Vertical, flex_gate::{FlexGateConfig, GateStrategy}}, SKIP_FIRST_PASS, AssignedValue, gates::{GateInstructions, range::RangeConfig}, Context, ContextParams, utils::{bigint_to_fe, biguint_to_fe, fe_to_bigint, fe_to_biguint, value_to_option}, QuantumCell};
+}, gates::range::RangeStrategy::Vertical, SKIP_FIRST_PASS, AssignedValue, gates::{GateInstructions, range::RangeConfig}, QuantumCell, utils::{biguint_to_fe, fe_to_bigint}};
 use halo2_ecc::{
     ecc::{ecdsa::ecdsa_verify_no_pubkey_check, EccChip},
     fields::{fp::{FpStrategy, FpConfig}, FieldChip},
 };
 use halo2_base::utils::modulus;
-use num_bigint::BigUint;
-use std::{fs::File, collections::hash_map, hash};
+use num_bigint::{BigUint, BigInt};
+use regex::Regex;
+use std::{fs::File, collections::hash_map, cmp::min};
 use serde::{Deserialize, Serialize};
 use std::env::var;
 use halo2_base::utils::PrimeField;
@@ -63,7 +66,6 @@ pub struct Base64Config<F: PrimeField> {
     q_decode_selector: Selector,
     fp_config: FpConfig<F, Fp>,
     sha256_config: Sha256DynamicConfig<F>,
-    flex_config: FlexGateConfig<F>,
     _marker: PhantomData<F>,
 }
 
@@ -181,7 +183,7 @@ impl<F: PrimeField> Base64Config<F> {
             Self::NUM_FIXED,
             Self::LOOKUP_BITS,
             0,
-            19,
+            17,
         );
         // let hash_column = meta.instance_column();
         // meta.enable_equality(hash_column);
@@ -194,15 +196,6 @@ impl<F: PrimeField> Base64Config<F> {
             true,
         );
 
-        let flex_config = FlexGateConfig::configure(
-            meta,
-            GateStrategy::Vertical,
-            &[Self::NUM_ADVICE],
-            Self::NUM_FIXED,
-            0,
-            19
-        );
-
         let config = Self {
             encoded_chars,
             bit_decompositions: bit_decompositions.try_into().unwrap(),
@@ -212,7 +205,6 @@ impl<F: PrimeField> Base64Config<F> {
             q_decode_selector,
             fp_config,
             sha256_config,
-            flex_config,
             _marker: PhantomData,
         };
         // Create bit lookup for each 6-bit encoded value
@@ -366,9 +358,10 @@ impl<F: PrimeField> Circuit<F> for Base64Circuit<F> {
         sha256.range().load_lookup_table(&mut layouter)?;
         sha256.load(&mut layouter)?;
 
-        let flex_config = config.flex_config;
+        let flex_config = sha256.range().clone().gate;
 
-        let base64_result = layouter.assign_region(
+        // leaf certificate base64 decoded result
+        let leaf_cert = layouter.assign_region(
             || "Assign all values",
             |mut region| self.base64_assign_values(
                 &mut region, &self.base64_encoded_string,
@@ -380,26 +373,77 @@ impl<F: PrimeField> Circuit<F> for Base64Circuit<F> {
                 config.q_decode_selector
             ),
         )?;
+
         let mut first_pass = SKIP_FIRST_PASS;
-        // println!("based64: {:?}", &base64_result.decoded[323..323+12]);
-        let pubkey_x = &base64_result.decoded[335..335+32];
-        let pubkey_y = &base64_result.decoded[335+32..335+64];
-        // println!("pubkey_x: {:?}", pubkey_x);
+        let re = Regex::new(r"inner: Some\(0x(.{64})\)").unwrap();
+        // coffes for converting big-endian bytes to original bigint
+        // load constants from [2^248, 2^240, ..., 2^8, 2^0]
+        let coffes = (0..32).map(|i| QuantumCell::Constant(
+            biguint_to_fe(&BigUint::from(2u32).pow(248 - 8 * i)))).collect::<Vec<_>>();
 
         // let mut assigned_hash_cells = vec![];
+        // let mut msghash_mod: Vec<AssignedValue<F>> = vec![];
         let range = sha256.range().clone();
         let qe_report: Vec<u8> = vec![8, 9, 14, 13, 255, 255, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 21, 0, 0, 0, 0, 0, 0, 0, 231, 0, 0, 0, 0, 0, 0, 0, 206, 29, 168, 154, 193, 245, 74, 128, 114, 87, 196, 229, 124, 120, 20, 12, 188, 102, 82, 212, 213, 135, 214, 15, 5, 131, 18, 90, 39, 146, 190, 112, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 140, 79, 87, 117, 215, 150, 80, 62, 150, 19, 127, 119, 198, 138, 130, 154, 0, 86, 172, 141, 237, 112, 20, 11, 8, 27, 9, 68, 144, 197, 123, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 9, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 9, 188, 124, 79, 211, 205, 227, 97, 238, 49, 224, 32, 91, 56, 220, 72, 241, 138, 165, 234, 97, 86, 191, 147, 42, 38, 34, 143, 92, 197, 56, 135, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
- 
-        // NOTE (xiaowentao) All the values must be Little-Endian
-        let pubkey_x_base = Fp::from_bytes(&[25, 122, 102, 10, 107, 161, 208, 37, 40, 103, 230, 212, 217, 201, 219, 37, 243, 21, 148, 231, 81, 156, 37, 255, 173, 53, 17, 65, 57, 1, 131, 41]).unwrap();
-        let pubkey_y_base = Fp::from_bytes(&[61, 92, 233, 152, 97, 160, 133, 116, 50, 175, 252, 245, 58, 47, 19, 241, 229, 38, 133, 160, 239, 55, 223, 203, 39, 166, 219, 23, 138, 241, 140, 84]).unwrap();
-        let pubkey_point: Option<Secp256r1Affine> = Secp256r1Affine::from_xy(pubkey_x_base, pubkey_y_base).into();
-        // sha256 result of qeReport (attestation[436+128:436+512])
-        let msghash_tmp: Option<Fq> = <Secp256r1Affine as CurveAffine>::ScalarExt::from_bytes(&[213, 190, 114, 4, 209, 8, 253, 177, 115, 233, 78, 182, 125, 86, 180, 111, 229, 1, 180, 87, 87, 165, 247, 28, 227, 115, 150, 79, 183, 175, 176, 217]).into();
-        // qeReportSig (attestation[436+512:436+576])
-        let r_point: Option<Fq> = <Secp256r1Affine as CurveAffine>::ScalarExt::from_bytes(&[85, 11, 117, 70, 141, 121, 224, 181, 11, 22, 189, 36, 53, 164, 196, 215, 128, 241, 3, 3, 78, 217, 25, 34, 39, 31, 169, 113, 138, 231, 85, 42]).into();
-        let s_point: Option<Fq> = <Secp256r1Affine as CurveAffine>::ScalarExt::from_bytes(&[41, 142, 197, 233, 154, 110, 18, 217, 14, 60, 22, 79, 26, 131, 37, 102, 35, 30, 143, 208, 8, 164, 25, 160, 36, 86, 192, 101, 211, 255, 243, 6]).into();
-        println!("msghash_tmp: {:?}", msghash_tmp.unwrap());
+
+        let mut msg_hash_cell = vec![];
+        let mut msg_hash_value = vec![];
+        let mut msg_hash_row_offset = vec![];
+        let mut msg_hash_context_id = vec![];
+        let mut hash_bytes_u8: Vec<u8> = vec![];
+        layouter.assign_region(
+            || "dynamic sha2",
+            |region| {
+                if first_pass {
+                    first_pass = false;
+                    return Ok(());
+                }
+
+                let ctx = &mut sha256.new_context(region);
+                let result0 = sha256.digest(
+                    ctx,
+                    &qe_report,
+                    Some(384),
+                )?;
+                let hash_bytes: Vec<QuantumCell<'_, '_, F>> = result0.output_bytes.into_iter().map(
+                    |v| QuantumCell::ExistingOwned(v)).collect();
+                hash_bytes_u8.extend::<&Vec<u8>>(&hash_bytes.clone().into_iter().rev().map(
+                    |x| u8::from_str_radix(
+                        &re.captures(
+                            &format!("{:?}", x)
+                        ).unwrap().get(1).unwrap().as_str().to_string(),
+                        16
+                    ).unwrap()).collect());
+                // big-endian
+                let (_, msghash) = flex_config.inner_product_simple_with_assignments(
+                    ctx, coffes.clone(), hash_bytes);
+                
+                msg_hash_cell.push(msghash.cell);
+                msg_hash_value.push(msghash.value);
+                msg_hash_row_offset.push(msghash.row_offset);
+                msg_hash_context_id.push(msghash.context_id);
+
+                range.finalize(ctx);
+                // {
+                //     println!("total advice cells: {}", ctx.total_advice);
+                //     let const_rows = ctx.total_fixed + 1;
+                //     println!("maximum rows used by a fixed column: {const_rows}");
+                //     println!("lookup cells used: {}", ctx.cells_to_lookup.len());
+                // }
+                Ok(())
+            },
+        )?;
+        // NOTE (xiaowentao) This value is msghash mod p where p is Fr's modulus 0x30644e72e131a029b85045b68181585d2833e84879b9709143e1f593f0000001
+        let msghash_mod_by_fr_p = 
+            AssignedValue {
+                cell: msg_hash_cell[0],
+                value: msg_hash_value[0],
+                row_offset: msg_hash_row_offset[0],
+                context_id: msg_hash_context_id[0],
+                _marker: PhantomData
+            };
+        // the output of sha256 is big-endian
+        // println!("msghash mod by fr's p: {:?}", msghash_mod_by_fr_p);
 
         layouter.assign_region(
             || "ECDSA",
@@ -408,33 +452,93 @@ impl<F: PrimeField> Circuit<F> for Base64Circuit<F> {
                     first_pass = false;
                     return Ok(());
                 }
+ 
+                // NOTE (xiaowentao) All the values must be Little-Endian
+                // let pubkey_x_base = Fp::from_bytes(&[25, 122, 102, 10, 107, 161, 208, 37, 40, 103, 230, 212, 217, 201, 219, 37, 243, 21, 148, 231, 81, 156, 37, 255, 173, 53, 17, 65, 57, 1, 131, 41]).unwrap();
+                // let pubkey_y_base = Fp::from_bytes(&[61, 92, 233, 152, 97, 160, 133, 116, 50, 175, 252, 245, 58, 47, 19, 241, 229, 38, 133, 160, 239, 55, 223, 203, 39, 166, 219, 23, 138, 241, 140, 84]).unwrap();
+                // let pubkey_point: Option<Secp256r1Affine> = Secp256r1Affine::from_xy(pubkey_x_base, pubkey_y_base).into();
+                // sha256 result of qeReport (attestation[436+128:436+512])
+                // let msghash: Option<Fq> = <Secp256r1Affine as CurveAffine>::ScalarExt::from_bytes(&[213, 190, 114, 4, 209, 8, 253, 177, 115, 233, 78, 182, 125, 86, 180, 111, 229, 1, 180, 87, 87, 165, 247, 28, 227, 115, 150, 79, 183, 175, 176, 217]).into();
+                let msghash_array: [u8; 32] = hash_bytes_u8.clone().try_into().unwrap_or_else(
+                    |v| panic!("failed to convert vec to array")
+                );
+                let msghash: Option<Fq> = <Secp256r1Affine as CurveAffine>::ScalarExt::from_bytes(&msghash_array).into();
+                // qeReportSig (attestation[436+512:436+576])
+                let r_point: Option<Fq> = <Secp256r1Affine as CurveAffine>::ScalarExt::from_bytes(&[85, 11, 117, 70, 141, 121, 224, 181, 11, 22, 189, 36, 53, 164, 196, 215, 128, 241, 3, 3, 78, 217, 25, 34, 39, 31, 169, 113, 138, 231, 85, 42]).into();
+                let s_point: Option<Fq> = <Secp256r1Affine as CurveAffine>::ScalarExt::from_bytes(&[41, 142, 197, 233, 154, 110, 18, 217, 14, 60, 22, 79, 26, 131, 37, 102, 35, 30, 143, 208, 8, 164, 25, 160, 36, 86, 192, 101, 211, 255, 243, 6]).into();
 
                 let mut aux = fp_chip.new_context(region);
                 let ctx = &mut aux;
 
-                let result0 = sha256.digest(
+                // println!("leaf cert decoded: {:?}", &leaf_cert.decoded[..3]);
+                let leaf_cert_assigned: Vec<AssignedValue<'_, F>> = leaf_cert.decoded.clone().iter().map(
+                    |x| fp_chip.gate().mul(ctx, QuantumCell::Witness(
+                        Some(F::from_u128(u128::from_str_radix(
+                            &re.captures(
+                                &format!("{:?}", x)
+                            ).map_or(
+                                "1".to_string(),
+                                |i| i.get(1).unwrap().as_str().to_string()),
+                            16
+                        ).unwrap())).map_or(Value::unknown(), Value::known)
+                    ), QuantumCell::Constant(F::one()))
+                ).collect();
+                // euality constraints for leaf cert base64 decoded bytes
+                for (leaf_cert_byte, leaf_cert_byte_assigned) in leaf_cert.decoded.clone().iter().zip(
+                    leaf_cert_assigned.iter()) {
+                        ctx.region.constrain_equal(leaf_cert_byte.cell(), leaf_cert_byte_assigned.cell()).unwrap();
+                    }
+
+                // get pubkey from leaf_cert, starts with [2, 1, 6, 8, 42, 134, 72, 206, 61, 3, 1, 7, 3, 66, 0, 4]
+                // which is oid of secp256r1
+                // NOTE (xiaowentao) here, hard-coded the start position of pubkey to be 335
+                // varirable length is not friendly in halo2
+                // and also note that they are big-endian in cert and after inner_product
+                // they will be mod by Fr's modulus
+                let pubkey_x_mod = fp_chip.gate().inner_product(
                     ctx,
-                    &qe_report,
-                    Some(384),
-                )?;
-                let hash_bytes: Vec<QuantumCell<'_, '_, F>> = result0.output_bytes.into_iter().map(
-                    |v| QuantumCell::ExistingOwned(v)).collect();
-                range.finalize(ctx);
+                    leaf_cert_assigned[335..335+32].into_iter().map(|x| QuantumCell::Existing(x)).collect::<Vec<QuantumCell<F>>>(),
+                    coffes.clone());
+                let pubkey_y_mod = fp_chip.gate().inner_product(
+                    ctx,
+                    leaf_cert_assigned[335+32..335+64].into_iter().map(|x| QuantumCell::Existing(x)).collect::<Vec<QuantumCell<F>>>(),
+                    coffes.clone());
+                // big-endian => little-endian
+                let pubkey_x_bytes: Vec<u8> = if leaf_cert.decoded.len() > 0 {
+                    leaf_cert.decoded[335..335+32].iter().rev().map(
+                        |x| u8::from_str_radix(
+                                &re.captures(
+                                    &format!("{:?}", x)
+                                ).map_or(
+                                "1".to_string(),
+                                |i| i.get(1).unwrap().as_str().to_string()),
+                                16
+                            ).unwrap()).collect()
+                } else {
+                    vec![1; 32]
+                };
+                let pubkey_y_bytes: Vec<u8> = if leaf_cert.decoded.len() > 0 {
+                    leaf_cert.decoded[335+32..335+64].iter().rev().map(
+                        |x| u8::from_str_radix(
+                                &re.captures(
+                                    &format!("{:?}", x)
+                                ).map_or(
+                                "1".to_string(),
+                                |i| i.get(1).unwrap().as_str().to_string()),
+                                16
+                            ).unwrap()).collect()
+                } else {
+                    vec![1; 32]
+                };
 
-                // big-endian
-                // load constants from [2^248, 2^240, ..., 2^8, 2^0]
-                let coffes = (0..32).map(|i| QuantumCell::Constant(
-                    biguint_to_fe(&BigUint::from(2u32).pow(248 - 8 * i)))).collect::<Vec<_>>();
-                println!("hash_bytes: {:?}\n{:?}\n", &hash_bytes[..], hash_bytes.len());
-                println!("coffs: {:?}\n{:?}\n", &coffes[..], coffes.len());
-
-                let (inter, msghash) = flex_config.inner_product_simple_with_assignments(
-                    ctx, coffes, hash_bytes);
-                println!("inter: {:?}\n{:?}\n", inter, inter.len());
-                println!("msghash: {:?}", msghash);
-
-                let msghash_bigint = fe_to_bigint(value_to_option(msghash.value()).unwrap());
-
+                let pubkey_x_base = Fp::from_bytes(&pubkey_x_bytes.try_into().unwrap_or_else(
+                    |v| panic!("failed to convert vec to array")
+                )).unwrap();
+                let pubkey_y_base = Fp::from_bytes(&pubkey_y_bytes.try_into().unwrap_or_else(
+                    |v| panic!("failed to convert vec to array")
+                )).unwrap();
+                let pubkey_point: Option<Secp256r1Affine> = Secp256r1Affine::from_xy(pubkey_x_base, pubkey_y_base).into();
+                    
                 let (r_assigned, s_assigned, m_assigned) = {
                     let fq_chip = FpConfig::<F, Fq>::construct(
                         fp_chip.range.clone(),
@@ -446,13 +550,8 @@ impl<F: PrimeField> Circuit<F> for Base64Circuit<F> {
                     let m_assigned = fq_chip.load_private(
                         ctx,
                         FpConfig::<F, Fq>::fe_to_witness(
-                            &msghash_tmp.map_or(Value::unknown(), Value::known),
+                            &msghash.map_or(Value::unknown(), Value::known),
                         ),
-                    );
-                    println!("true m_assigned: {:?} {:?}", m_assigned.native, m_assigned.truncation);
-
-                    let m_assigned = fq_chip.load_private(
-                        ctx, Some(msghash_bigint).map_or(Value::unknown(), Value::known)
                     );
 
                     let r_assigned = fq_chip.load_private(
@@ -470,6 +569,10 @@ impl<F: PrimeField> Circuit<F> for Base64Circuit<F> {
                     (r_assigned, s_assigned, m_assigned)
                 };
 
+                // NOTE (xiaowentao) check msghash mod by Fr's p is actually the native value in m_assigned (CRTInteger)
+                // NOTE (xiaowentao) we need to ensure that the m_assigned is indeed the msghash outputed by sha256 circuit
+                fp_chip.gate().assert_equal(ctx, QuantumCell::Existing(m_assigned.native()), QuantumCell::Existing(&msghash_mod_by_fr_p));
+
                 let ecc_chip = EccChip::<F, FpChip<F>>::construct(fp_chip.clone());
                 let pk_assigned = ecc_chip.load_private(
                     ctx,
@@ -478,6 +581,11 @@ impl<F: PrimeField> Circuit<F> for Base64Circuit<F> {
                         pubkey_point.map_or(Value::unknown(), |pt| Value::known(pt.y)),
                     ),
                 );
+
+                // checks like msghash_mod_by_fr_p
+                fp_chip.gate().assert_equal(ctx, QuantumCell::Existing(pk_assigned.x.native()), QuantumCell::Existing(&pubkey_x_mod));
+                fp_chip.gate().assert_equal(ctx, QuantumCell::Existing(pk_assigned.y.native()), QuantumCell::Existing(&pubkey_y_mod));
+
                 // test ECDSA
                 let ecdsa = ecdsa_verify_no_pubkey_check::<F, Fp, Fq, Secp256r1Affine>(
                     &ecc_chip.field_chip,
@@ -490,11 +598,14 @@ impl<F: PrimeField> Circuit<F> for Base64Circuit<F> {
                     4,
                 );
                 
+                // check the ecdsa signature verification result is ok
                 fp_chip.gate().assert_is_const(ctx, &ecdsa, F::one());
 
                 // IMPORTANT: this copies cells to the lookup advice column to perform range check lookups
                 // This is not optional.
                 fp_chip.finalize(ctx);
+
+                println!("ECDSA res {ecdsa:?}");
 
                 #[cfg(feature = "display")]
                 if self.r.is_some() {
@@ -513,19 +624,20 @@ impl<F: PrimeField> Circuit<F> for Base64Circuit<F> {
 
 #[cfg(test)]
 mod tests {
-    use halo2_base::halo2_proofs::{
+    use halo2_base::{halo2_proofs::{
         circuit::floor_planner::V1,
         dev::{CircuitCost, FailureLocation, MockProver, VerifyFailure},
-        halo2curves::bn256::{Fr, G1},
-        plonk::{Any, Circuit},
-    };
+        halo2curves::{bn256::{Fr, G1, Bn256, G1Affine}, pasta::pallas::Base},
+        plonk::{Any, Circuit, create_proof, keygen_vk, keygen_pk, verify_proof}, transcript::{Blake2bWrite, Challenge255, TranscriptWriterBuffer, Blake2bRead, TranscriptReadBuffer}, poly::{kzg::{commitment::KZGCommitmentScheme, multiopen::{ProverSHPLONK, VerifierSHPLONK}, strategy::SingleStrategy}, commitment::ParamsProver},
+    }, utils::fs::gen_srs};
+    use rand_chacha::rand_core::OsRng;
 
     use super::*;
 
     // TODO: set an offset in the email for the bh= and see what happens
     #[test]
     fn test_base64_decode_pass() {
-        let k = 20; // 8, 128, etc
+        let k = 17; // 8, 128, etc
 
         // Convert query string to u128s
         // "R0g=""
@@ -555,8 +667,49 @@ mod tests {
             Err(e) => panic!("Error: {:?}", e),
         };
         prover.assert_satisfied();
-        CircuitCost::<G1, Base64Circuit<Fr>>::measure((k as u128).try_into().unwrap(), &circuit);
+        // CircuitCost::<G1, Base64Circuit<Fr>>::measure((k as u128).try_into().unwrap(), &circuit);
         // .proof_size(2);
+
+        let params_time = start_timer!(|| "Time elapsed in circuit & params construction");
+        let params = gen_srs(k);
+        end_timer!(params_time);
+
+        let vk_time = start_timer!(|| "Time elapsed in generating vkey");
+        let vk = keygen_vk(&params, &circuit).unwrap();
+        end_timer!(vk_time);
+
+        let pk_time = start_timer!(|| "Time elapsed in generating pkey");
+        let pk = keygen_pk(&params, vk, &circuit).unwrap();
+        end_timer!(pk_time);
+
+        // create a proof
+        let mut rng = OsRng;
+        let proof_time = start_timer!(|| "Proving time");
+        let mut transcript = Blake2bWrite::<_, _, Challenge255<_>>::init(vec![]);
+        create_proof::<
+            KZGCommitmentScheme<Bn256>,
+            ProverSHPLONK<'_, Bn256>,
+            Challenge255<G1Affine>,
+            _,
+            Blake2bWrite<Vec<u8>, G1Affine, Challenge255<G1Affine>>,
+            Base64Circuit<Fr>,
+        >(&params, &pk, &[circuit], &[&[]], &mut rng, &mut transcript).unwrap();
+        let proof = transcript.finalize();
+        end_timer!(proof_time);
+
+        let verify_time = start_timer!(|| "Verify time");
+        let verifier_params = params.verifier_params();
+        let strategy = SingleStrategy::new(&params);
+        let mut transcript = Blake2bRead::<_, _, Challenge255<_>>::init(&proof[..]);
+        assert!(verify_proof::<
+            KZGCommitmentScheme<Bn256>,
+            VerifierSHPLONK<'_, Bn256>,
+            Challenge255<G1Affine>,
+            Blake2bRead<&[u8], G1Affine, Challenge255<G1Affine>>,
+            SingleStrategy<'_, Bn256>,
+        >(verifier_params, pk.get_vk(), strategy, &[&[]], &mut transcript)
+        .is_ok());
+        end_timer!(verify_time);
 
         // Assert the 33rd pos is 0
     }
