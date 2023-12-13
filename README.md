@@ -1,6 +1,12 @@
 # zk-dcap-verifier
 A halo2 implementation of on-chain DCAP attestation verification
 
+## Demo: QE3 report verification
+
+* Get the leaf certificate from SGX attestation's certificate chain. Put it to [this line]([https://github.com/CliqueOfficial/zk-dcap-verifier/blob/main/circuits/src/sgx_dcap_verifier.rs#L645](https://github.com/CliqueOfficial/zk-dcap-verifier/blob/main/circuits/src/sgx_dcap_verifier.rs#L645))
+* Put the QE3 report's signature to [this line](https://github.com/CliqueOfficial/zk-dcap-verifier/blob/93011d8f833f262ee4c5fc1f6b5394365b957e74/circuits/src/sgx_dcap_verifier.rs#L466)
+* Put the QE3 report to [this line](https://github.com/CliqueOfficial/zk-dcap-verifier/blob/93011d8f833f262ee4c5fc1f6b5394365b957e74/circuits/src/sgx_dcap_verifier.rs#L466)
+
 ## Roadmap
 
 **Checking the signature**
