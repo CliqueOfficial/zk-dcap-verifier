@@ -91,7 +91,6 @@ pub fn create_proof(input: ECDSAInput) -> Result<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
-    use hex_literal::hex;
     use snark_verifier_sdk::{
         snark_verifier::{
             halo2_base::{
