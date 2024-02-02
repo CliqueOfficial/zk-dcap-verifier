@@ -1,34 +1,40 @@
-use std::path::PathBuf;
+use std::{io::Write, path::PathBuf, rc::Rc};
 
 use anyhow::{anyhow, Result};
 use snark_verifier_sdk::{
     gen_pk,
     halo2::{gen_proof_shplonk, gen_snark_shplonk, PoseidonTranscript},
     read_pk,
-    snark_verifier::halo2_base::{
-        gates::{
-            circuit::{builder::BaseCircuitBuilder, BaseCircuitParams, CircuitBuilderStage},
-            flex_gate::MultiPhaseThreadBreakPoints,
-        },
-        halo2_proofs::{
-            dev::MockProver,
-            halo2curves::bn256::{Bn256, Fr, G1Affine},
-            plonk::{keygen_pk, keygen_vk, Circuit, ProvingKey},
-            poly::{
-                commitment::{Params, ParamsProver},
-                kzg::{
-                    commitment::{KZGCommitmentScheme, ParamsKZG},
-                    multiopen::VerifierSHPLONK,
-                    strategy::SingleStrategy,
-                },
-                VerificationStrategy,
+    snark_verifier::{
+        halo2_base::{
+            gates::{
+                circuit::{builder::BaseCircuitBuilder, BaseCircuitParams, CircuitBuilderStage},
+                flex_gate::MultiPhaseThreadBreakPoints,
             },
-            SerdeFormat,
+            halo2_proofs::{
+                dev::MockProver,
+                halo2curves::bn256::{Bn256, Fq, Fr, G1Affine},
+                plonk::{keygen_pk, keygen_vk, Circuit, ProvingKey},
+                poly::{
+                    commitment::{Params, ParamsProver},
+                    kzg::{
+                        commitment::{KZGCommitmentScheme, ParamsKZG},
+                        multiopen::VerifierSHPLONK,
+                        strategy::SingleStrategy,
+                    },
+                    VerificationStrategy,
+                },
+                SerdeFormat,
+            },
+            utils::fs::gen_srs,
+            AssignedValue,
         },
-        utils::fs::gen_srs,
-        AssignedValue,
+        loader::evm::{self, EvmLoader},
+        pcs::kzg::KzgAs,
+        system::halo2::{compile, transcript::evm::EvmTranscript, Config},
+        verifier::SnarkVerifier,
     },
-    NativeLoader,
+    NativeLoader, PlonkVerifier, GWC, SHPLONK,
 };
 
 use crate::{circuit::ecdsa_verify, ECDSAInput};
@@ -90,6 +96,8 @@ pub struct ECDSAProver {
 }
 
 impl ECDSAProver {
+    const INSTANCES_LEN: usize = 15;
+
     fn read_pinning() -> Option<(BaseCircuitParams, MultiPhaseThreadBreakPoints)> {
         if let Ok(f) = std::fs::File::open("params/pinning.json") {
             if let Ok(c) =
@@ -193,6 +201,31 @@ impl ECDSAProver {
         assert!(accept);
         Ok(snark.proof)
     }
+
+    pub fn gen_evm_verifier(&self) -> Vec<u8> {
+        let protocol = compile(
+            &self.params,
+            self.pk.get_vk(),
+            Config::kzg().with_num_instance(vec![Self::INSTANCES_LEN]),
+        );
+
+        let vk = (self.params.get_g()[0], self.params.g2(), self.params.s_g2()).into();
+
+        let loader = EvmLoader::new::<Fq, Fr>();
+        let protocol = protocol.loaded(&loader);
+        let mut transcript = EvmTranscript::<_, Rc<EvmLoader>, _, _>::new(&loader);
+
+        let instances = transcript.load_instances(vec![Self::INSTANCES_LEN]);
+        let proof =
+            PlonkVerifier::<SHPLONK>::read_proof(&vk, &protocol, &instances, &mut transcript)
+                .unwrap();
+
+        assert!(PlonkVerifier::<SHPLONK>::verify(&vk, &protocol, &instances, &proof).is_ok());
+        let code = loader.solidity_code();
+        let mut f = std::fs::File::create("temp.sol").unwrap();
+        f.write_all(code.as_bytes()).unwrap();
+        evm::compile_solidity(&code)
+    }
 }
 
 impl Default for ECDSAProver {
@@ -254,5 +287,12 @@ mod tests {
         let input = custom_parameters_ecdsa(1, 1, 1);
         let prover = ECDSAProver::new();
         prover.create_proof(input).unwrap();
+    }
+
+    #[test]
+    fn test_p256_ecdsa_evm() {
+        let input = custom_parameters_ecdsa(1, 1, 1);
+        let prover = ECDSAProver::new();
+        prover.gen_evm_verifier();
     }
 }
