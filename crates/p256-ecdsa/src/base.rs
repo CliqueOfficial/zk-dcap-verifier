@@ -4,6 +4,7 @@ use anyhow::{anyhow, Result};
 use snark_verifier_sdk::{
     gen_pk,
     halo2::{gen_proof_shplonk, gen_snark_shplonk, PoseidonTranscript},
+    read_pk,
     snark_verifier::halo2_base::{
         gates::{
             circuit::{builder::BaseCircuitBuilder, BaseCircuitParams, CircuitBuilderStage},
@@ -11,8 +12,8 @@ use snark_verifier_sdk::{
         },
         halo2_proofs::{
             dev::MockProver,
-            halo2curves::bn256::{Bn256, Fr},
-            plonk::{keygen_pk, keygen_vk, verify_proof, Circuit},
+            halo2curves::bn256::{Bn256, Fr, G1Affine},
+            plonk::{keygen_pk, keygen_vk, Circuit, ProvingKey},
             poly::{
                 commitment::{Params, ParamsProver},
                 kzg::{
@@ -20,7 +21,9 @@ use snark_verifier_sdk::{
                     multiopen::VerifierSHPLONK,
                     strategy::SingleStrategy,
                 },
+                VerificationStrategy,
             },
+            SerdeFormat,
         },
         utils::fs::gen_srs,
         AssignedValue,
@@ -28,7 +31,7 @@ use snark_verifier_sdk::{
     NativeLoader,
 };
 
-use crate::{circuit::ecdsa_verify, CircuitParams, ECDSAInput};
+use crate::{circuit::ecdsa_verify, ECDSAInput};
 
 #[derive(Clone)]
 pub struct PreCircuit<T, Fn> {
@@ -80,77 +83,138 @@ where
     }
 }
 
-pub fn create_proof(input: ECDSAInput) -> Result<Vec<u8>> {
-    let pre_circuit = PreCircuit {
-        private_inputs: input,
-        f: ecdsa_verify,
-    };
+pub struct ECDSAProver {
+    pk: ProvingKey<G1Affine>,
+    params: ParamsKZG<Bn256>,
+    pinning: (BaseCircuitParams, MultiPhaseThreadBreakPoints),
+}
 
-    let circuit_params = CircuitParams::default();
+impl ECDSAProver {
+    fn read_pinning() -> Option<(BaseCircuitParams, MultiPhaseThreadBreakPoints)> {
+        if let Ok(f) = std::fs::File::open("params/pinning.json") {
+            if let Ok(c) =
+                serde_json::from_reader::<_, (BaseCircuitParams, MultiPhaseThreadBreakPoints)>(f)
+            {
+                return Some(c);
+            } else {
+                // remove invalid file
+                let _ = std::fs::remove_file(PathBuf::from("params/pinning.json"));
+            }
+        }
+        None
+    }
 
-    let params = gen_srs(circuit_params.degree);
+    fn from_files() -> Option<Self> {
+        if let Some(pinning) = Self::read_pinning() {
+            let params = gen_srs(pinning.0.k as u32);
+            if let Ok(pk) = read_pk::<BaseCircuitBuilder<Fr>>(
+                &PathBuf::from("params/pk.bin"),
+                pinning.0.clone(),
+            ) {
+                return Some(Self {
+                    pk,
+                    params,
+                    pinning,
+                });
+            }
+        }
+        None
+    }
 
-    let circuit = pre_circuit
-        .clone()
-        .create_circuit(CircuitBuilderStage::Keygen, None, &params)?;
+    pub fn new() -> Self {
+        if let Some(v) = Self::from_files() {
+            return v;
+        }
 
-    let pk = gen_pk(&params, &circuit, None);
+        let params = gen_srs(18);
+        let input = ECDSAInput::default();
+        let pre_circuit = PreCircuit {
+            private_inputs: input,
+            f: ecdsa_verify,
+        };
+        let circuit = pre_circuit
+            .create_circuit(CircuitBuilderStage::Keygen, None, &params)
+            .expect("pre-built circuit cannot failed");
 
-    let c_params = circuit.params();
-    let break_points = circuit.break_points();
-    dbg!(&break_points);
+        let pk = gen_pk(&params, &circuit, Some(&PathBuf::from("params/pk.bin")));
+        let pinning = {
+            let path = PathBuf::from("params/pinning.json");
+            let pinning = (circuit.params(), circuit.break_points());
+            let mut file = std::fs::File::create(path).unwrap();
+            serde_json::to_writer_pretty(&mut file, &pinning).unwrap();
+            pinning
+        };
 
-    let vk = pk.get_vk();
+        Self {
+            params,
+            pk,
+            pinning,
+        }
+    }
 
-    let circuit = pre_circuit.clone().create_circuit(
-        CircuitBuilderStage::Prover,
-        Some((c_params, break_points)),
-        &params,
-    )?;
-    let snark = gen_snark_shplonk(&params, &pk, circuit, Some(&PathBuf::from("snark.bin")));
+    pub fn create_proof(&self, input: ECDSAInput) -> Result<Vec<u8>> {
+        let pre_circuit = PreCircuit {
+            private_inputs: input,
+            f: ecdsa_verify,
+        };
 
-    let mut circuit =
-        pre_circuit
-            .clone()
-            .create_circuit(CircuitBuilderStage::Keygen, None, &params)?;
+        let circuit = pre_circuit.clone().create_circuit(
+            CircuitBuilderStage::Prover,
+            Some(self.pinning.clone()),
+            &self.params,
+        )?;
 
-    let mut transcript =
-        PoseidonTranscript::<NativeLoader, &[u8]>::new::<0>(snark.proof.as_slice());
-    let instances = snark.instances[0].as_slice();
+        let snark = gen_snark_shplonk(&self.params, &self.pk, circuit, Option::<&PathBuf>::None);
+        let accept = {
+            let vk = self.pk.get_vk();
+            let mut circuit =
+                pre_circuit.create_circuit(CircuitBuilderStage::Keygen, None, &self.params)?;
 
-    let verifier_params = params.verifier_params();
-    let strategy = SingleStrategy::new(&params);
+            let mut transcript =
+                PoseidonTranscript::<NativeLoader, &[u8]>::new::<0>(snark.proof.as_slice());
+            let instances = snark.instances[0].as_slice();
 
-    verify_proof::<KZGCommitmentScheme<Bn256>, VerifierSHPLONK<'_, Bn256>, _, _, _>(
-        verifier_params,
-        vk,
-        strategy,
-        &[&[instances]],
-        &mut transcript,
-    )?;
+            circuit.clear();
+            snark_verifier_sdk::snark_verifier::halo2_base::halo2_proofs::plonk::verify_proof::<
+                KZGCommitmentScheme<Bn256>,
+                VerifierSHPLONK<'_, Bn256>,
+                _,
+                _,
+                _,
+            >(
+                self.params.verifier_params(),
+                vk,
+                SingleStrategy::new(&self.params),
+                &[&[instances]],
+                &mut transcript,
+            )
+            .is_ok()
+        };
+        assert!(accept);
+        Ok(snark.proof)
+    }
+}
 
-    circuit.clear();
-
-    Ok(vec![])
+impl Default for ECDSAProver {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use snark_verifier_sdk::{
-        snark_verifier::{
-            halo2_base::{
-                halo2_proofs::halo2curves::secp256r1::Fq,
-                utils::{biguint_to_fe, fe_to_biguint, modulus},
-            },
-            util::arithmetic::PrimeField,
+    use snark_verifier_sdk::snark_verifier::{
+        halo2_base::{
+            halo2_proofs::halo2curves::secp256r1::Fq,
+            utils::{biguint_to_fe, fe_to_biguint, modulus},
         },
-        CircuitExt,
+        util::arithmetic::PrimeField,
     };
 
     use super::*;
 
+    use crate::halo2curves::secp256r1::Secp256r1Affine as Affine;
     use crate::{halo2_proofs::arithmetic::CurveAffine, ECDSAInput};
-    use crate::{halo2curves::secp256r1::Secp256r1Affine as Affine, CircuitParams};
 
     fn custom_parameters_ecdsa(sk: u64, msg_hash: u64, k: u64) -> ECDSAInput {
         let sk = <Affine as CurveAffine>::ScalarExt::from(sk);
@@ -188,23 +252,7 @@ mod tests {
     #[test]
     fn test_p256_ecdsa() {
         let input = custom_parameters_ecdsa(1, 1, 1);
-        create_proof(input).unwrap();
-
-        // let params = gen_srs(18);
-        //
-        // let pre_circuit = PreCircuit {
-        //     private_inputs: input,
-        //     f: ecdsa_verify,
-        // };
-        //
-        // let builder = pre_circuit
-        //     .create_circuit(CircuitBuilderStage::Prover, None, &params)
-        //     .unwrap();
-        //
-        // let instances = builder.instances();
-        //
-        // MockProver::run(18, &builder, instances)
-        //     .unwrap()
-        //     .assert_satisfied();
+        let prover = ECDSAProver::new();
+        prover.create_proof(input).unwrap();
     }
 }

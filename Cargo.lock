@@ -1356,6 +1356,7 @@ name = "p256-ecdsa"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "serde_json",
  "snark-verifier-sdk",
 ]
 

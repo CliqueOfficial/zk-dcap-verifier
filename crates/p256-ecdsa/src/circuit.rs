@@ -11,7 +11,7 @@ use snark_verifier_sdk::{
                     bn256::{Bn256, Fr},
                     secp256r1::{Fp, Fq, Secp256r1Affine as Affine},
                 },
-                plonk::{keygen_pk, keygen_vk},
+                plonk::{keygen_pk, keygen_vk, Circuit},
                 poly::kzg::{
                     commitment::ParamsKZG,
                     multiopen::{ProverSHPLONK, VerifierSHPLONK},
@@ -28,22 +28,25 @@ use snark_verifier_sdk::{
     },
 };
 
-use crate::{CircuitParams, ECDSAInput};
+use crate::ECDSAInput;
 
 pub fn ecdsa_verify(
     builder: &mut BaseCircuitBuilder<Fr>,
     input: ECDSAInput,
     make_public: &mut Vec<AssignedValue<Fr>>,
 ) -> Result<()> {
-    let params = CircuitParams::default();
-    let range = RangeChip::new(params.lookup_bits, builder.lookup_manager().clone());
+    const LOOKUP_BITS: usize = 17;
+    const LIMB_BITS: usize = 88;
+    const NUM_LIMBS: usize = 3;
+
+    let range = RangeChip::new(LOOKUP_BITS, builder.lookup_manager().clone());
 
     let ctx = builder.main(0);
 
     let res = {
         let range = &range;
-        let fp_chip = FpChip::new(range, params.limb_bits, params.num_limbs);
-        let fq_chip = FqChip::new(range, params.limb_bits, params.num_limbs);
+        let fp_chip = FpChip::new(range, LIMB_BITS, NUM_LIMBS);
+        let fq_chip = FqChip::new(range, LIMB_BITS, NUM_LIMBS);
 
         let [m, r, s] = [input.msghash, input.r, input.s].map(|x| fq_chip.load_private(ctx, x));
 
