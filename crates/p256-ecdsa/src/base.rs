@@ -1,6 +1,9 @@
+use std::path::PathBuf;
+
 use anyhow::{anyhow, Result};
 use snark_verifier_sdk::{
-    halo2::gen_proof_shplonk,
+    gen_pk,
+    halo2::{gen_proof_shplonk, gen_snark_shplonk, PoseidonTranscript},
     snark_verifier::halo2_base::{
         gates::{
             circuit::{builder::BaseCircuitBuilder, BaseCircuitParams, CircuitBuilderStage},
@@ -9,16 +12,25 @@ use snark_verifier_sdk::{
         halo2_proofs::{
             dev::MockProver,
             halo2curves::bn256::{Bn256, Fr},
-            plonk::{keygen_pk, keygen_vk},
-            poly::{commitment::Params, kzg::commitment::ParamsKZG},
+            plonk::{keygen_pk, keygen_vk, verify_proof, Circuit},
+            poly::{
+                commitment::{Params, ParamsProver},
+                kzg::{
+                    commitment::{KZGCommitmentScheme, ParamsKZG},
+                    multiopen::VerifierSHPLONK,
+                    strategy::SingleStrategy,
+                },
+            },
         },
         utils::fs::gen_srs,
         AssignedValue,
     },
+    NativeLoader,
 };
 
 use crate::{circuit::ecdsa_verify, CircuitParams, ECDSAInput};
 
+#[derive(Clone)]
 pub struct PreCircuit<T, Fn> {
     private_inputs: T,
     f: Fn,
@@ -69,23 +81,56 @@ where
 }
 
 pub fn create_proof(input: ECDSAInput) -> Result<Vec<u8>> {
-    let params = CircuitParams::default();
-
     let pre_circuit = PreCircuit {
         private_inputs: input,
         f: ecdsa_verify,
     };
 
-    // let builder = pre_circuit.create_circuit(CircuitBuilderStage::Keygen)?;
+    let circuit_params = CircuitParams::default();
 
-    // let kzg_params = gen_srs(params.degree);
-    // let vk = keygen_vk(&kzg_params, &builder)?;
-    // let pk = keygen_pk(&kzg_params, vk, &builder)?;
+    let params = gen_srs(circuit_params.degree);
 
-    // MockProver::run(params.degree, &builder, vec![])
-    //     .unwrap()
-    //     .assert_satisfied();
-    // gen_proof_shplonk(kzg_params, pk, circuit, instances, path)
+    let circuit = pre_circuit
+        .clone()
+        .create_circuit(CircuitBuilderStage::Keygen, None, &params)?;
+
+    let pk = gen_pk(&params, &circuit, None);
+
+    let c_params = circuit.params();
+    let break_points = circuit.break_points();
+    dbg!(&break_points);
+
+    let vk = pk.get_vk();
+
+    let circuit = pre_circuit.clone().create_circuit(
+        CircuitBuilderStage::Prover,
+        Some((c_params, break_points)),
+        &params,
+    )?;
+    let snark = gen_snark_shplonk(&params, &pk, circuit, Some(&PathBuf::from("snark.bin")));
+
+    let mut circuit =
+        pre_circuit
+            .clone()
+            .create_circuit(CircuitBuilderStage::Keygen, None, &params)?;
+
+    let mut transcript =
+        PoseidonTranscript::<NativeLoader, &[u8]>::new::<0>(snark.proof.as_slice());
+    let instances = snark.instances[0].as_slice();
+
+    let verifier_params = params.verifier_params();
+    let strategy = SingleStrategy::new(&params);
+
+    verify_proof::<KZGCommitmentScheme<Bn256>, VerifierSHPLONK<'_, Bn256>, _, _, _>(
+        verifier_params,
+        vk,
+        strategy,
+        &[&[instances]],
+        &mut transcript,
+    )?;
+
+    circuit.clear();
+
     Ok(vec![])
 }
 
@@ -142,31 +187,24 @@ mod tests {
 
     #[test]
     fn test_p256_ecdsa() {
-        macro_rules! fr {
-            ($x: literal) => {{
-                let mut s = hex_literal::hex!($x);
-                s.reverse();
-                Fr::from_bytes(&s).unwrap()
-            }};
-        }
-
         let input = custom_parameters_ecdsa(1, 1, 1);
+        create_proof(input).unwrap();
 
-        let params = gen_srs(18);
-
-        let pre_circuit = PreCircuit {
-            private_inputs: input,
-            f: ecdsa_verify,
-        };
-
-        let builder = pre_circuit
-            .create_circuit(CircuitBuilderStage::Mock, None, &params)
-            .unwrap();
-
-        let mut instances = builder.instances();
-
-        MockProver::run(18, &builder, instances)
-            .unwrap()
-            .assert_satisfied();
+        // let params = gen_srs(18);
+        //
+        // let pre_circuit = PreCircuit {
+        //     private_inputs: input,
+        //     f: ecdsa_verify,
+        // };
+        //
+        // let builder = pre_circuit
+        //     .create_circuit(CircuitBuilderStage::Prover, None, &params)
+        //     .unwrap();
+        //
+        // let instances = builder.instances();
+        //
+        // MockProver::run(18, &builder, instances)
+        //     .unwrap()
+        //     .assert_satisfied();
     }
 }
