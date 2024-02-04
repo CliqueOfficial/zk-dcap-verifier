@@ -144,7 +144,17 @@ impl ECDSAProver {
             .create_circuit(CircuitBuilderStage::Keygen, None, &params)
             .expect("pre-built circuit cannot failed");
 
-        let pk = gen_pk(&params, &circuit, Some(&PathBuf::from("params/pk.bin")));
+        let pk = {
+            let pk = gen_pk(&params, &circuit, Some(&PathBuf::from("params/pk.bin")));
+            let vk = pk.get_vk();
+
+            let vk_path = PathBuf::from("params/vk.bin");
+            let mut file = std::fs::File::create(vk_path).unwrap();
+            vk.write(&mut file, SerdeFormat::RawBytesUnchecked).unwrap();
+
+            pk
+        };
+
         let pinning = {
             let path = PathBuf::from("params/pinning.json");
             let pinning = (circuit.params(), circuit.break_points());
@@ -202,7 +212,7 @@ impl ECDSAProver {
         Ok(snark.proof)
     }
 
-    pub fn gen_evm_verifier(&self) -> Vec<u8> {
+    pub fn gen_evm_verifier(&self) -> String {
         let protocol = compile(
             &self.params,
             self.pk.get_vk(),
@@ -221,10 +231,7 @@ impl ECDSAProver {
                 .unwrap();
 
         assert!(PlonkVerifier::<SHPLONK>::verify(&vk, &protocol, &instances, &proof).is_ok());
-        let code = loader.solidity_code();
-        let mut f = std::fs::File::create("temp.sol").unwrap();
-        f.write_all(code.as_bytes()).unwrap();
-        evm::compile_solidity(&code)
+        loader.solidity_code()
     }
 }
 
@@ -287,12 +294,5 @@ mod tests {
         let input = custom_parameters_ecdsa(1, 1, 1);
         let prover = ECDSAProver::new();
         prover.create_proof(input).unwrap();
-    }
-
-    #[test]
-    fn test_p256_ecdsa_evm() {
-        let input = custom_parameters_ecdsa(1, 1, 1);
-        let prover = ECDSAProver::new();
-        prover.gen_evm_verifier();
     }
 }

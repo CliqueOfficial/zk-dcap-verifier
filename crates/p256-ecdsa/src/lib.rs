@@ -13,6 +13,10 @@ pub mod base;
 pub mod circuit;
 
 use halo2curves::secp256r1::{Fp, Fq};
+use snark_verifier_sdk::snark_verifier::halo2_base::halo2_proofs::halo2curves::bn256::Fr;
+use snark_verifier_sdk::snark_verifier::halo2_base::utils::decompose_biguint;
+use snark_verifier_sdk::snark_verifier::halo2_base::utils::fe_to_biguint;
+use snark_verifier_sdk::snark_verifier::halo2_base::utils::ScalarField;
 
 // Fq < Fp
 #[derive(Clone, Copy, Debug, Default)]
@@ -54,5 +58,17 @@ impl ECDSAInput {
             x,
             y,
         })
+    }
+
+    pub fn as_instances(&self) -> Vec<Fr> {
+        const LIMB_BITS: usize = 88;
+        const NUM_LIMBS: usize = 3;
+
+        fn f(x: impl ScalarField) -> Vec<Fr> {
+            let x = fe_to_biguint(&x);
+            decompose_biguint::<Fr>(&x, NUM_LIMBS, LIMB_BITS)
+        }
+
+        [f(self.msghash), f(self.r), f(self.s), f(self.x), f(self.y)].concat()
     }
 }
