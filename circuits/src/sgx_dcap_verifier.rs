@@ -1,31 +1,37 @@
 #![allow(non_snake_case)]
 // use halo2::halo2curves::bn256::G1Affine;
 use base64::{engine::general_purpose, Engine};
+use halo2_base::utils::modulus;
+use halo2_base::utils::PrimeField;
 use halo2_base::{
+    gates::range::RangeStrategy::Vertical,
+    gates::{range::RangeConfig, GateInstructions},
     halo2_proofs::{
         circuit::{AssignedCell, Layouter, Region, SimpleFloorPlanner, Value},
-        plonk::{
-            Advice, Circuit, Column, ConstraintSystem, Error, Expression,
-            Selector,
+        halo2curves::{
+            secp256r1::{Fp, Fq, Secp256r1Affine},
+            CurveAffine,
         },
-        poly::Rotation, halo2curves::{secp256r1::{Fp, Secp256r1Affine, Fq}, CurveAffine},
+        plonk::{Advice, Circuit, Column, ConstraintSystem, Error, Expression, Selector},
+        poly::Rotation,
     },
-    gates::range::RangeStrategy::Vertical, SKIP_FIRST_PASS, AssignedValue,
-    gates::{GateInstructions, range::RangeConfig}, QuantumCell, utils::biguint_to_fe
+    utils::biguint_to_fe,
+    AssignedValue, QuantumCell, SKIP_FIRST_PASS,
 };
+use halo2_dynamic_sha256::*;
 use halo2_ecc::{
     ecc::{ecdsa::ecdsa_verify_no_pubkey_check, EccChip},
-    fields::{fp::{FpStrategy, FpConfig}, FieldChip},
+    fields::{
+        fp::{FpConfig, FpStrategy},
+        FieldChip,
+    },
 };
-use halo2_base::utils::modulus;
 use num_bigint::BigUint;
 use regex::Regex;
-use std::fs::File;
 use serde::{Deserialize, Serialize};
 use std::env::var;
-use halo2_base::utils::PrimeField;
+use std::fs::File;
 use std::{marker::PhantomData, vec};
-use halo2_dynamic_sha256::*;
 
 use crate::table::BitDecompositionTableConfig;
 // use snark_verifier_sdk::CircuitExt;
@@ -253,18 +259,19 @@ impl<F: PrimeField> SgxDcapVerifierCircuit<F> {
         decoded_chars: Column<Advice>,
         decoded_chars_without_gap: Column<Advice>,
         bit_decomposition_table: BitDecompositionTableConfig<F>,
-        q_decode_selector: Selector
+        q_decode_selector: Selector,
     ) -> Result<AssignedSgxDcapVerifierResult<F>, Error> {
         let mut assigned_encoded_values = Vec::new();
         let mut assigned_decoded_values = Vec::new();
 
         // Set the decoded values and enable permutation checks with offset
-        let res_decoded_chars: Vec<u8> = general_purpose::STANDARD
-            .decode(characters)
-            .expect(&format!(
-                "{:?} is an invalid sgx_dcap_verifier string bytes",
-                characters
-            ));
+        let res_decoded_chars: Vec<u8> =
+            general_purpose::STANDARD
+                .decode(characters)
+                .expect(&format!(
+                    "{:?} is an invalid sgx_dcap_verifier string bytes",
+                    characters
+                ));
         for i in 0..res_decoded_chars.len() {
             let offset_value = region.assign_advice(
                 || format!("decoded character"),
@@ -283,8 +290,8 @@ impl<F: PrimeField> SgxDcapVerifierCircuit<F> {
 
         // Set the character values as encoded chars
         for i in 0..SHAHASH_BASE64_STRING_LEN {
-            let bit_val: u8 = bit_decomposition_table
-                .map_character_to_encoded_value(characters[i] as char);
+            let bit_val: u8 =
+                bit_decomposition_table.map_character_to_encoded_value(characters[i] as char);
             let assigned_encoded = region.assign_advice(
                 || format!("encoded character"),
                 encoded_chars,
@@ -362,28 +369,49 @@ impl<F: PrimeField> Circuit<F> for SgxDcapVerifierCircuit<F> {
         // leaf certificate sgx_dcap_verifier decoded result
         let leaf_cert = layouter.assign_region(
             || "Assign all values",
-            |mut region| self.sgx_dcap_verifier_assign_values(
-                &mut region, &self.sgx_dcap_verifier_encoded_string,
-                config.encoded_chars,
-                config.bit_decompositions,
-                config.decoded_chars,
-                config.decoded_chars_without_gap,
-                config.bit_decomposition_table,
-                config.q_decode_selector
-            ),
+            |mut region| {
+                self.sgx_dcap_verifier_assign_values(
+                    &mut region,
+                    &self.sgx_dcap_verifier_encoded_string,
+                    config.encoded_chars,
+                    config.bit_decompositions,
+                    config.decoded_chars,
+                    config.decoded_chars_without_gap,
+                    config.bit_decomposition_table,
+                    config.q_decode_selector,
+                )
+            },
         )?;
 
         let mut first_pass = SKIP_FIRST_PASS;
         let re = Regex::new(r"inner: Some\(0x(.{64})\)").unwrap();
         // coffes for converting big-endian bytes to original bigint
         // load constants from [2^248, 2^240, ..., 2^8, 2^0]
-        let coffes = (0..32).map(|i| QuantumCell::Constant(
-            biguint_to_fe(&BigUint::from(2u32).pow(248 - 8 * i)))).collect::<Vec<_>>();
+        let coffes = (0..32)
+            .map(|i| QuantumCell::Constant(biguint_to_fe(&BigUint::from(2u32).pow(248 - 8 * i))))
+            .collect::<Vec<_>>();
 
         // let mut assigned_hash_cells = vec![];
         // let mut msghash_mod: Vec<AssignedValue<F>> = vec![];
         let range = sha256.range().clone();
-        let qe_report: Vec<u8> = vec![8, 9, 14, 13, 255, 255, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 21, 0, 0, 0, 0, 0, 0, 0, 231, 0, 0, 0, 0, 0, 0, 0, 206, 29, 168, 154, 193, 245, 74, 128, 114, 87, 196, 229, 124, 120, 20, 12, 188, 102, 82, 212, 213, 135, 214, 15, 5, 131, 18, 90, 39, 146, 190, 112, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 140, 79, 87, 117, 215, 150, 80, 62, 150, 19, 127, 119, 198, 138, 130, 154, 0, 86, 172, 141, 237, 112, 20, 11, 8, 27, 9, 68, 144, 197, 123, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 9, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 9, 188, 124, 79, 211, 205, 227, 97, 238, 49, 224, 32, 91, 56, 220, 72, 241, 138, 165, 234, 97, 86, 191, 147, 42, 38, 34, 143, 92, 197, 56, 135, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        let qe_report: Vec<u8> = vec![
+            8, 9, 14, 13, 255, 255, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 21, 0, 0, 0, 0, 0, 0, 0,
+            231, 0, 0, 0, 0, 0, 0, 0, 206, 29, 168, 154, 193, 245, 74, 128, 114, 87, 196, 229, 124,
+            120, 20, 12, 188, 102, 82, 212, 213, 135, 214, 15, 5, 131, 18, 90, 39, 146, 190, 112,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 140, 79, 87, 117, 215, 150, 80, 62, 150, 19, 127, 119, 198, 138, 130, 154, 0,
+            86, 172, 141, 237, 112, 20, 11, 8, 27, 9, 68, 144, 197, 123, 255, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 1, 0, 9, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 9, 188, 124, 79, 211, 205, 227, 97, 238, 49, 224, 32, 91, 56,
+            220, 72, 241, 138, 165, 234, 97, 86, 191, 147, 42, 38, 34, 143, 92, 197, 56, 135, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0,
+        ];
 
         let mut msg_hash_cell = vec![];
         let mut msg_hash_value = vec![];
@@ -399,24 +427,38 @@ impl<F: PrimeField> Circuit<F> for SgxDcapVerifierCircuit<F> {
                 }
 
                 let ctx = &mut sha256.new_context(region);
-                let result0 = sha256.digest(
-                    ctx,
-                    &qe_report,
-                    Some(384),
-                )?;
-                let hash_bytes: Vec<QuantumCell<'_, '_, F>> = result0.output_bytes.into_iter().map(
-                    |v| QuantumCell::ExistingOwned(v)).collect();
-                hash_bytes_u8.extend::<&Vec<u8>>(&hash_bytes.clone().into_iter().rev().map(
-                    |x| u8::from_str_radix(
-                        &re.captures(
-                            &format!("{:?}", x)
-                        ).unwrap().get(1).unwrap().as_str().to_string(),
-                        16
-                    ).unwrap()).collect());
+                let result0 = sha256.digest(ctx, &qe_report, Some(384))?;
+                let hash_bytes: Vec<QuantumCell<'_, '_, F>> = result0
+                    .output_bytes
+                    .into_iter()
+                    .map(|v| QuantumCell::ExistingOwned(v))
+                    .collect();
+                hash_bytes_u8.extend::<&Vec<u8>>(
+                    &hash_bytes
+                        .clone()
+                        .into_iter()
+                        .rev()
+                        .map(|x| {
+                            u8::from_str_radix(
+                                &re.captures(&format!("{:?}", x))
+                                    .unwrap()
+                                    .get(1)
+                                    .unwrap()
+                                    .as_str()
+                                    .to_string(),
+                                16,
+                            )
+                            .unwrap()
+                        })
+                        .collect(),
+                );
                 // big-endian
                 let (_, msghash) = flex_config.inner_product_simple_with_assignments(
-                    ctx, coffes.clone(), hash_bytes);
-                
+                    ctx,
+                    coffes.clone(),
+                    hash_bytes,
+                );
+
                 msg_hash_cell.push(msghash.cell);
                 msg_hash_value.push(msghash.value);
                 msg_hash_row_offset.push(msghash.row_offset);
@@ -433,14 +475,13 @@ impl<F: PrimeField> Circuit<F> for SgxDcapVerifierCircuit<F> {
             },
         )?;
         // NOTE (xiaowentao) This value is msghash mod p where p is Fr's modulus 0x30644e72e131a029b85045b68181585d2833e84879b9709143e1f593f0000001
-        let msghash_mod_by_fr_p = 
-            AssignedValue {
-                cell: msg_hash_cell[0],
-                value: msg_hash_value[0],
-                row_offset: msg_hash_row_offset[0],
-                context_id: msg_hash_context_id[0],
-                _marker: PhantomData
-            };
+        let msghash_mod_by_fr_p = AssignedValue {
+            cell: msg_hash_cell[0],
+            value: msg_hash_value[0],
+            row_offset: msg_hash_row_offset[0],
+            context_id: msg_hash_context_id[0],
+            _marker: PhantomData,
+        };
         // the output of sha256 is big-endian
         // println!("msghash mod by fr's p: {:?}", msghash_mod_by_fr_p);
 
@@ -451,42 +492,72 @@ impl<F: PrimeField> Circuit<F> for SgxDcapVerifierCircuit<F> {
                     first_pass = false;
                     return Ok(());
                 }
- 
+
                 // NOTE (xiaowentao) All the values must be Little-Endian
                 // let pubkey_x_base = Fp::from_bytes(&[25, 122, 102, 10, 107, 161, 208, 37, 40, 103, 230, 212, 217, 201, 219, 37, 243, 21, 148, 231, 81, 156, 37, 255, 173, 53, 17, 65, 57, 1, 131, 41]).unwrap();
                 // let pubkey_y_base = Fp::from_bytes(&[61, 92, 233, 152, 97, 160, 133, 116, 50, 175, 252, 245, 58, 47, 19, 241, 229, 38, 133, 160, 239, 55, 223, 203, 39, 166, 219, 23, 138, 241, 140, 84]).unwrap();
                 // let pubkey_point: Option<Secp256r1Affine> = Secp256r1Affine::from_xy(pubkey_x_base, pubkey_y_base).into();
                 // sha256 result of qeReport (attestation[436+128:436+512])
                 // let msghash: Option<Fq> = <Secp256r1Affine as CurveAffine>::ScalarExt::from_bytes(&[213, 190, 114, 4, 209, 8, 253, 177, 115, 233, 78, 182, 125, 86, 180, 111, 229, 1, 180, 87, 87, 165, 247, 28, 227, 115, 150, 79, 183, 175, 176, 217]).into();
-                let msghash_array: [u8; 32] = hash_bytes_u8.clone().try_into().unwrap_or_else(
-                    |_| panic!("failed to convert vec to array")
-                );
-                let msghash: Option<Fq> = <Secp256r1Affine as CurveAffine>::ScalarExt::from_bytes(&msghash_array).into();
+                let msghash_array: [u8; 32] = hash_bytes_u8
+                    .clone()
+                    .try_into()
+                    .unwrap_or_else(|_| panic!("failed to convert vec to array"));
+                let msghash: Option<Fq> =
+                    <Secp256r1Affine as CurveAffine>::ScalarExt::from_bytes(&msghash_array).into();
                 // qeReportSig (attestation[436+512:436+576])
-                let r_point: Option<Fq> = <Secp256r1Affine as CurveAffine>::ScalarExt::from_bytes(&[85, 11, 117, 70, 141, 121, 224, 181, 11, 22, 189, 36, 53, 164, 196, 215, 128, 241, 3, 3, 78, 217, 25, 34, 39, 31, 169, 113, 138, 231, 85, 42]).into();
-                let s_point: Option<Fq> = <Secp256r1Affine as CurveAffine>::ScalarExt::from_bytes(&[41, 142, 197, 233, 154, 110, 18, 217, 14, 60, 22, 79, 26, 131, 37, 102, 35, 30, 143, 208, 8, 164, 25, 160, 36, 86, 192, 101, 211, 255, 243, 6]).into();
+                let r_point: Option<Fq> =
+                    <Secp256r1Affine as CurveAffine>::ScalarExt::from_bytes(&[
+                        85, 11, 117, 70, 141, 121, 224, 181, 11, 22, 189, 36, 53, 164, 196, 215,
+                        128, 241, 3, 3, 78, 217, 25, 34, 39, 31, 169, 113, 138, 231, 85, 42,
+                    ])
+                    .into();
+                let s_point: Option<Fq> =
+                    <Secp256r1Affine as CurveAffine>::ScalarExt::from_bytes(&[
+                        41, 142, 197, 233, 154, 110, 18, 217, 14, 60, 22, 79, 26, 131, 37, 102, 35,
+                        30, 143, 208, 8, 164, 25, 160, 36, 86, 192, 101, 211, 255, 243, 6,
+                    ])
+                    .into();
 
                 let mut aux = fp_chip.new_context(region);
                 let ctx = &mut aux;
 
                 // println!("leaf cert decoded: {:?}", &leaf_cert.decoded[..3]);
-                let leaf_cert_assigned: Vec<AssignedValue<'_, F>> = leaf_cert.decoded.clone().iter().map(
-                    |x| fp_chip.gate().mul(ctx, QuantumCell::Witness(
-                        Some(F::from_u128(u128::from_str_radix(
-                            &re.captures(
-                                &format!("{:?}", x)
-                            ).map_or(
-                                "1".to_string(),
-                                |i| i.get(1).unwrap().as_str().to_string()),
-                            16
-                        ).unwrap())).map_or(Value::unknown(), Value::known)
-                    ), QuantumCell::Constant(F::one()))
-                ).collect();
+                let leaf_cert_assigned: Vec<AssignedValue<'_, F>> = leaf_cert
+                    .decoded
+                    .clone()
+                    .iter()
+                    .map(|x| {
+                        fp_chip.gate().mul(
+                            ctx,
+                            QuantumCell::Witness(
+                                Some(F::from_u128(
+                                    u128::from_str_radix(
+                                        &re.captures(&format!("{:?}", x))
+                                            .map_or("1".to_string(), |i| {
+                                                i.get(1).unwrap().as_str().to_string()
+                                            }),
+                                        16,
+                                    )
+                                    .unwrap(),
+                                ))
+                                .map_or(Value::unknown(), Value::known),
+                            ),
+                            QuantumCell::Constant(F::one()),
+                        )
+                    })
+                    .collect();
                 // euality constraints for leaf cert sgx_dcap_verifier decoded bytes
-                for (leaf_cert_byte, leaf_cert_byte_assigned) in leaf_cert.decoded.clone().iter().zip(
-                    leaf_cert_assigned.iter()) {
-                        ctx.region.constrain_equal(leaf_cert_byte.cell(), leaf_cert_byte_assigned.cell()).unwrap();
-                    }
+                for (leaf_cert_byte, leaf_cert_byte_assigned) in leaf_cert
+                    .decoded
+                    .clone()
+                    .iter()
+                    .zip(leaf_cert_assigned.iter())
+                {
+                    ctx.region
+                        .constrain_equal(leaf_cert_byte.cell(), leaf_cert_byte_assigned.cell())
+                        .unwrap();
+                }
 
                 // get pubkey from leaf_cert, starts with [2, 1, 6, 8, 42, 134, 72, 206, 61, 3, 1, 7, 3, 66, 0, 4]
                 // which is oid of secp256r1
@@ -496,48 +567,73 @@ impl<F: PrimeField> Circuit<F> for SgxDcapVerifierCircuit<F> {
                 // they will be mod by Fr's modulus
                 let pubkey_x_mod = fp_chip.gate().inner_product(
                     ctx,
-                    leaf_cert_assigned[335..335+32].into_iter().map(|x| QuantumCell::Existing(x)).collect::<Vec<QuantumCell<F>>>(),
-                    coffes.clone());
+                    leaf_cert_assigned[335..335 + 32]
+                        .into_iter()
+                        .map(|x| QuantumCell::Existing(x))
+                        .collect::<Vec<QuantumCell<F>>>(),
+                    coffes.clone(),
+                );
                 let pubkey_y_mod = fp_chip.gate().inner_product(
                     ctx,
-                    leaf_cert_assigned[335+32..335+64].into_iter().map(|x| QuantumCell::Existing(x)).collect::<Vec<QuantumCell<F>>>(),
-                    coffes.clone());
+                    leaf_cert_assigned[335 + 32..335 + 64]
+                        .into_iter()
+                        .map(|x| QuantumCell::Existing(x))
+                        .collect::<Vec<QuantumCell<F>>>(),
+                    coffes.clone(),
+                );
                 // big-endian => little-endian
                 let pubkey_x_bytes: Vec<u8> = if leaf_cert.decoded.len() > 0 {
-                    leaf_cert.decoded[335..335+32].iter().rev().map(
-                        |x| u8::from_str_radix(
-                                &re.captures(
-                                    &format!("{:?}", x)
-                                ).map_or(
-                                "1".to_string(),
-                                |i| i.get(1).unwrap().as_str().to_string()),
-                                16
-                            ).unwrap()).collect()
+                    leaf_cert.decoded[335..335 + 32]
+                        .iter()
+                        .rev()
+                        .map(|x| {
+                            u8::from_str_radix(
+                                &re.captures(&format!("{:?}", x))
+                                    .map_or("1".to_string(), |i| {
+                                        i.get(1).unwrap().as_str().to_string()
+                                    }),
+                                16,
+                            )
+                            .unwrap()
+                        })
+                        .collect()
                 } else {
                     vec![1; 32]
                 };
                 let pubkey_y_bytes: Vec<u8> = if leaf_cert.decoded.len() > 0 {
-                    leaf_cert.decoded[335+32..335+64].iter().rev().map(
-                        |x| u8::from_str_radix(
-                                &re.captures(
-                                    &format!("{:?}", x)
-                                ).map_or(
-                                "1".to_string(),
-                                |i| i.get(1).unwrap().as_str().to_string()),
-                                16
-                            ).unwrap()).collect()
+                    leaf_cert.decoded[335 + 32..335 + 64]
+                        .iter()
+                        .rev()
+                        .map(|x| {
+                            u8::from_str_radix(
+                                &re.captures(&format!("{:?}", x))
+                                    .map_or("1".to_string(), |i| {
+                                        i.get(1).unwrap().as_str().to_string()
+                                    }),
+                                16,
+                            )
+                            .unwrap()
+                        })
+                        .collect()
                 } else {
                     vec![1; 32]
                 };
 
-                let pubkey_x_base = Fp::from_bytes(&pubkey_x_bytes.try_into().unwrap_or_else(
-                    |_| panic!("failed to convert vec to array")
-                )).unwrap();
-                let pubkey_y_base = Fp::from_bytes(&pubkey_y_bytes.try_into().unwrap_or_else(
-                    |_| panic!("failed to convert vec to array")
-                )).unwrap();
-                let pubkey_point: Option<Secp256r1Affine> = Secp256r1Affine::from_xy(pubkey_x_base, pubkey_y_base).into();
-                    
+                let pubkey_x_base = Fp::from_bytes(
+                    &pubkey_x_bytes
+                        .try_into()
+                        .unwrap_or_else(|_| panic!("failed to convert vec to array")),
+                )
+                .unwrap();
+                let pubkey_y_base = Fp::from_bytes(
+                    &pubkey_y_bytes
+                        .try_into()
+                        .unwrap_or_else(|_| panic!("failed to convert vec to array")),
+                )
+                .unwrap();
+                let pubkey_point: Option<Secp256r1Affine> =
+                    Secp256r1Affine::from_xy(pubkey_x_base, pubkey_y_base).into();
+
                 let (r_assigned, s_assigned, m_assigned) = {
                     let fq_chip = FpConfig::<F, Fq>::construct(
                         fp_chip.range.clone(),
@@ -570,7 +666,11 @@ impl<F: PrimeField> Circuit<F> for SgxDcapVerifierCircuit<F> {
 
                 // NOTE (xiaowentao) check msghash mod by Fr's p is actually the native value in m_assigned (CRTInteger)
                 // NOTE (xiaowentao) we need to ensure that the m_assigned is indeed the msghash outputed by sha256 circuit
-                fp_chip.gate().assert_equal(ctx, QuantumCell::Existing(m_assigned.native()), QuantumCell::Existing(&msghash_mod_by_fr_p));
+                fp_chip.gate().assert_equal(
+                    ctx,
+                    QuantumCell::Existing(m_assigned.native()),
+                    QuantumCell::Existing(&msghash_mod_by_fr_p),
+                );
 
                 let ecc_chip = EccChip::<F, FpChip<F>>::construct(fp_chip.clone());
                 let pk_assigned = ecc_chip.load_private(
@@ -582,8 +682,16 @@ impl<F: PrimeField> Circuit<F> for SgxDcapVerifierCircuit<F> {
                 );
 
                 // checks like msghash_mod_by_fr_p
-                fp_chip.gate().assert_equal(ctx, QuantumCell::Existing(pk_assigned.x.native()), QuantumCell::Existing(&pubkey_x_mod));
-                fp_chip.gate().assert_equal(ctx, QuantumCell::Existing(pk_assigned.y.native()), QuantumCell::Existing(&pubkey_y_mod));
+                fp_chip.gate().assert_equal(
+                    ctx,
+                    QuantumCell::Existing(pk_assigned.x.native()),
+                    QuantumCell::Existing(&pubkey_x_mod),
+                );
+                fp_chip.gate().assert_equal(
+                    ctx,
+                    QuantumCell::Existing(pk_assigned.y.native()),
+                    QuantumCell::Existing(&pubkey_y_mod),
+                );
 
                 // test ECDSA
                 let ecdsa = ecdsa_verify_no_pubkey_check::<F, Fp, Fq, Secp256r1Affine>(
@@ -596,7 +704,7 @@ impl<F: PrimeField> Circuit<F> for SgxDcapVerifierCircuit<F> {
                     4,
                     4,
                 );
-                
+
                 // check the ecdsa signature verification result is ok
                 fp_chip.gate().assert_is_const(ctx, &ecdsa, F::one());
 
@@ -623,16 +731,28 @@ impl<F: PrimeField> Circuit<F> for SgxDcapVerifierCircuit<F> {
 
 #[cfg(test)]
 mod tests {
-    use halo2_base::{halo2_proofs::{
-        dev::MockProver,
-        halo2curves::bn256::{Fr, Bn256, G1Affine},
-        plonk::{create_proof, keygen_vk, keygen_pk, verify_proof},
-        transcript::{Blake2bWrite, Challenge255, TranscriptWriterBuffer, Blake2bRead, TranscriptReadBuffer},
-        poly::{kzg::{commitment::KZGCommitmentScheme, multiopen::{ProverSHPLONK, VerifierSHPLONK}, strategy::SingleStrategy},
-        commitment::ParamsProver},
-    }, utils::fs::gen_srs};
-    use rand_chacha::rand_core::OsRng;
     use ark_std::{end_timer, start_timer};
+    use halo2_base::{
+        halo2_proofs::{
+            dev::MockProver,
+            halo2curves::bn256::{Bn256, Fr, G1Affine},
+            plonk::{create_proof, keygen_pk, keygen_vk, verify_proof},
+            poly::{
+                commitment::ParamsProver,
+                kzg::{
+                    commitment::KZGCommitmentScheme,
+                    multiopen::{ProverSHPLONK, VerifierSHPLONK},
+                    strategy::SingleStrategy,
+                },
+            },
+            transcript::{
+                Blake2bRead, Blake2bWrite, Challenge255, TranscriptReadBuffer,
+                TranscriptWriterBuffer,
+            },
+        },
+        utils::fs::gen_srs,
+    };
+    use rand_chacha::rand_core::OsRng;
 
     use super::*;
 
@@ -694,7 +814,8 @@ mod tests {
             _,
             Blake2bWrite<Vec<u8>, G1Affine, Challenge255<G1Affine>>,
             SgxDcapVerifierCircuit<Fr>,
-        >(&params, &pk, &[circuit], &[&[]], &mut rng, &mut transcript).unwrap();
+        >(&params, &pk, &[circuit], &[&[]], &mut rng, &mut transcript)
+        .unwrap();
         let proof = transcript.finalize();
         end_timer!(proof_time);
 
@@ -708,7 +829,13 @@ mod tests {
             Challenge255<G1Affine>,
             Blake2bRead<&[u8], G1Affine, Challenge255<G1Affine>>,
             SingleStrategy<'_, Bn256>,
-        >(verifier_params, pk.get_vk(), strategy, &[&[]], &mut transcript)
+        >(
+            verifier_params,
+            pk.get_vk(),
+            strategy,
+            &[&[]],
+            &mut transcript
+        )
         .is_ok());
         end_timer!(verify_time);
 

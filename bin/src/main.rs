@@ -5,7 +5,8 @@ use p256_ecdsa::{
     halo2_base::gates::{
         circuit::{builder::BaseCircuitBuilder, BaseCircuitParams},
         flex_gate::MultiPhaseThreadBreakPoints,
-    }, halo2_proofs::{
+    },
+    halo2_proofs::{
         plonk::{verify_proof, VerifyingKey},
         poly::{
             commitment::{Params, ParamsProver},
@@ -16,7 +17,11 @@ use p256_ecdsa::{
             },
         },
         SerdeFormat,
-    }, halo2curves::bn256::{Bn256, Fr, G1Affine}, snark_verifier::loader::native::NativeLoader, snark_verifier_sdk::halo2::PoseidonTranscript, ECDSAInput, ECDSAProver
+    },
+    halo2curves::bn256::{Bn256, Fr, G1Affine},
+    snark_verifier::loader::native::NativeLoader,
+    snark_verifier_sdk::halo2::PoseidonTranscript,
+    ECDSAInput, ECDSAProver,
 };
 use structopt::StructOpt;
 
@@ -124,7 +129,7 @@ mod tests {
 
     #[test]
     fn test_cli_verify() -> Result<()> {
-        let cli = Cli::Verify { 
+        let cli = Cli::Verify {
             msghash: "0x9c8adb93585642008f6defe84b014d3db86e65ec158f32c1fe8b78974123c264".into(), 
             signature: "0x89e7242b7a0be99f7c668a8bdbc1fcaf6fa7562dd28538dbab4b059e9d6955c2c434593d3ccb0e7e5825effb14e251e6e5efb738d6042647ed2e2faac9191718".into(), 
             pubkey: "0x04cd8fdae57e9fcc6638b7e0bdf1cfe6eb4783c29ed13916f10c121c70b7173dd61291422f9ef68a1b6a7e9cccbe7cc2c0738f81a996f7e62e9094c1f80bc0d788".into(), 
