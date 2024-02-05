@@ -1,6 +1,6 @@
-use std::{io::Write, path::PathBuf, rc::Rc};
+use std::{path::PathBuf, rc::Rc};
 
-use anyhow::{Result};
+use anyhow::Result;
 use snark_verifier_sdk::{
     gen_pk,
     halo2::{gen_snark_shplonk, PoseidonTranscript},
@@ -21,14 +21,13 @@ use snark_verifier_sdk::{
                         multiopen::VerifierSHPLONK,
                         strategy::SingleStrategy,
                     },
-                    VerificationStrategy,
                 },
                 SerdeFormat,
             },
             utils::fs::gen_srs,
             AssignedValue,
         },
-        loader::evm::{EvmLoader},
+        loader::evm::EvmLoader,
         system::halo2::{compile, transcript::evm::EvmTranscript, Config},
         verifier::SnarkVerifier,
     },
@@ -245,15 +244,11 @@ impl Default for ECDSAProver {
 
 #[cfg(test)]
 mod tests {
-    use p256::{
-        ecdsa::{signature::hazmat::PrehashVerifier, Signature, VerifyingKey},
-    };
-    
+    use p256::ecdsa::{signature::hazmat::PrehashVerifier, Signature, VerifyingKey};
 
     use super::*;
 
-    
-    use crate::{ECDSAInput};
+    use crate::ECDSAInput;
 
     #[test]
     fn test_p256_ecdsa() {
