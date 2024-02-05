@@ -1,7 +1,11 @@
 [workspace]
 resolver = "2"
-members = [ "bin","circuits", "crates/p256-ecdsa"]
+members = ["bin", "circuits", "crates/p256-ecdsa"]
 
 [patch."https://github.com/axiom-crypto/halo2-lib.git"]
-halo2-base = { path = "../halo2-lib-secp256r1/halo2-base/" }
-halo2-ecc = { path = "../halo2-lib-secp256r1/halo2-ecc/" }
+halo2-base = { git = "https://github.com/CliqueOfficial/halo2-lib", branch = "ec-double-secp256r1" }
+halo2-ecc = { git = "https://github.com/CliqueOfficial/halo2-lib", branch = "ec-double-secp256r1" }
+
+[profile.test]
+opt-level = 3
+debug-assertions = true

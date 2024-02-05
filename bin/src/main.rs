@@ -1,4 +1,4 @@
-use std::io::BufReader;
+use std::{io::BufReader, path::PathBuf};
 
 use anyhow::{anyhow, Result};
 use p256_ecdsa::{
@@ -45,34 +45,25 @@ impl Cli {
                 pubkey,
                 proof,
             } => {
+                fn read_raw_or_file(raw: String) -> String {
+                    let raw = raw.trim();
+                    let is_literal = raw.starts_with("0x");
+                    if is_literal {
+                        raw[2..].into()
+                    } else {
+                        let p = PathBuf::from(&raw);
+                        std::fs::read_to_string(p).unwrap()
+                    }
+                }
                 let [msghash, signature, pubkey, proof] =
-                    [msghash, signature, pubkey, proof].map(Self::read_bytes);
+                    [msghash, signature, pubkey, proof].map(read_raw_or_file);
 
-                let (r, s) = (signature.len() == 64)
-                    .then(|| signature.split_at(32))
-                    .ok_or(anyhow!("signature should be 64 bytes"))?;
+                let input = ECDSAInput::try_from_hex(&msghash, &signature, &pubkey)?;
 
-                let (x, y) = (pubkey.len() == 65)
-                    .then(|| &pubkey[1..])
-                    .map(|v| v.split_at(32))
-                    .ok_or(anyhow!("Pubkey should be uncompressed format"))?;
-
-                let input = ECDSAInput::new(&msghash, r, s, x, y)?;
-
-                Self::inner_verify_proof(&proof, input)
+                Self::inner_verify_proof(&hex::decode(proof)?, input)
                     .then_some(())
                     .ok_or(anyhow!("Invalid signature"))
             }
-        }
-    }
-
-    fn read_bytes(raw: String) -> Vec<u8> {
-        let raw = raw.trim();
-        let is_literal = raw.starts_with("0x");
-        if is_literal {
-            hex::decode(&raw[2..]).unwrap()
-        } else {
-            vec![]
         }
     }
 

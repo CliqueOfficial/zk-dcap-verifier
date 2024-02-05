@@ -130,11 +130,7 @@ impl ECDSAProver {
         None
     }
 
-    pub fn new() -> Self {
-        if let Some(v) = Self::from_files() {
-            return v;
-        }
-
+    pub fn keygen() -> Result<()> {
         let params = gen_srs(18);
         let input = ECDSAInput::default();
         let pre_circuit = PreCircuit {
@@ -145,28 +141,38 @@ impl ECDSAProver {
             .create_circuit(CircuitBuilderStage::Keygen, None, &params)
             .expect("pre-built circuit cannot failed");
 
-        let pk = {
+        {
             let pk = gen_pk(&params, &circuit, Some(&PathBuf::from("params/pk.bin")));
             let vk = pk.get_vk();
 
             let vk_path = PathBuf::from("params/vk.bin");
+            if vk_path.exists() {
+                std::fs::remove_file(&vk_path).unwrap();
+            }
             let mut file = std::fs::File::create(vk_path).unwrap();
             vk.write(&mut file, SerdeFormat::RawBytesUnchecked).unwrap();
-
-            pk
         };
 
-        let pinning = {
+        {
             let path = PathBuf::from("params/pinning.json");
+            if path.exists() {
+                std::fs::remove_file(&path).unwrap();
+            }
             let pinning = (circuit.params(), circuit.break_points());
             let mut file = std::fs::File::create(path).unwrap();
             serde_json::to_writer_pretty(&mut file, &pinning).unwrap();
-            pinning
         };
+        Ok(())
+    }
 
+    pub fn new(
+        pk: ProvingKey<G1Affine>,
+        params: ParamsKZG<Bn256>,
+        pinning: (BaseCircuitParams, MultiPhaseThreadBreakPoints),
+    ) -> Self {
         Self {
-            params,
             pk,
+            params,
             pinning,
         }
     }
@@ -238,7 +244,12 @@ impl ECDSAProver {
 
 impl Default for ECDSAProver {
     fn default() -> Self {
-        Self::new()
+        if let Some(v) = Self::from_files() {
+            return v;
+        }
+
+        Self::keygen().unwrap();
+        Self::from_files().unwrap()
     }
 }
 
@@ -266,7 +277,7 @@ mod tests {
         }
 
         let input = ECDSAInput::try_from_hex(msghash, signature, pubkey).unwrap();
-        let prover = ECDSAProver::new();
+        let prover = ECDSAProver::default();
         prover.create_proof(input).unwrap();
     }
 }
