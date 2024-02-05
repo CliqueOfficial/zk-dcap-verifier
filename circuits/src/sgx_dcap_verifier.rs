@@ -268,13 +268,11 @@ impl<F: PrimeField> SgxDcapVerifierCircuit<F> {
         let res_decoded_chars: Vec<u8> =
             general_purpose::STANDARD
                 .decode(characters)
-                .expect(&format!(
-                    "{:?} is an invalid sgx_dcap_verifier string bytes",
-                    characters
-                ));
+                .unwrap_or_else(|_| panic!("{:?} is an invalid sgx_dcap_verifier string bytes",
+                    characters));
         for i in 0..res_decoded_chars.len() {
             let offset_value = region.assign_advice(
-                || format!("decoded character"),
+                || "decoded character".to_string(),
                 decoded_chars_without_gap,
                 i,
                 || Value::known(F::from_u128(res_decoded_chars[i].into())),
@@ -293,7 +291,7 @@ impl<F: PrimeField> SgxDcapVerifierCircuit<F> {
             let bit_val: u8 =
                 bit_decomposition_table.map_character_to_encoded_value(characters[i] as char);
             let assigned_encoded = region.assign_advice(
-                || format!("encoded character"),
+                || "encoded character".to_string(),
                 encoded_chars,
                 i,
                 || Value::known(F::from(characters[i] as u64)),
@@ -303,7 +301,7 @@ impl<F: PrimeField> SgxDcapVerifierCircuit<F> {
             // Set bit values by decomposing the encoded character
             for j in 0..3 {
                 region.assign_advice(
-                    || format!("bit assignment"),
+                    || "bit assignment".to_string(),
                     bit_decompositions[(i % 4) * 3 + j],
                     i - (i % 4),
                     || Value::known(F::from_u128(((bit_val >> ((2 - j) * 2)) % 4) as u128)),
@@ -339,8 +337,8 @@ impl<F: PrimeField> Circuit<F> for SgxDcapVerifierCircuit<F> {
     fn configure(meta: &mut ConstraintSystem<F>) -> Self::Config {
         // let encoded_chars = meta.advice_column();
         // TODO Set an offset to encoded_chars
-        let config = SgxDcapVerifierConfig::configure(meta);
-        config
+        
+        SgxDcapVerifierConfig::configure(meta)
     }
 
     fn synthesize(
@@ -440,12 +438,11 @@ impl<F: PrimeField> Circuit<F> for SgxDcapVerifierCircuit<F> {
                         .rev()
                         .map(|x| {
                             u8::from_str_radix(
-                                &re.captures(&format!("{:?}", x))
+                                re.captures(&format!("{:?}", x))
                                     .unwrap()
                                     .get(1)
                                     .unwrap()
-                                    .as_str()
-                                    .to_string(),
+                                    .as_str(),
                                 16,
                             )
                             .unwrap()
@@ -568,7 +565,7 @@ impl<F: PrimeField> Circuit<F> for SgxDcapVerifierCircuit<F> {
                 let pubkey_x_mod = fp_chip.gate().inner_product(
                     ctx,
                     leaf_cert_assigned[335..335 + 32]
-                        .into_iter()
+                        .iter()
                         .map(|x| QuantumCell::Existing(x))
                         .collect::<Vec<QuantumCell<F>>>(),
                     coffes.clone(),
@@ -576,13 +573,13 @@ impl<F: PrimeField> Circuit<F> for SgxDcapVerifierCircuit<F> {
                 let pubkey_y_mod = fp_chip.gate().inner_product(
                     ctx,
                     leaf_cert_assigned[335 + 32..335 + 64]
-                        .into_iter()
+                        .iter()
                         .map(|x| QuantumCell::Existing(x))
                         .collect::<Vec<QuantumCell<F>>>(),
                     coffes.clone(),
                 );
                 // big-endian => little-endian
-                let pubkey_x_bytes: Vec<u8> = if leaf_cert.decoded.len() > 0 {
+                let pubkey_x_bytes: Vec<u8> = if !leaf_cert.decoded.is_empty() {
                     leaf_cert.decoded[335..335 + 32]
                         .iter()
                         .rev()
@@ -600,7 +597,7 @@ impl<F: PrimeField> Circuit<F> for SgxDcapVerifierCircuit<F> {
                 } else {
                     vec![1; 32]
                 };
-                let pubkey_y_bytes: Vec<u8> = if leaf_cert.decoded.len() > 0 {
+                let pubkey_y_bytes: Vec<u8> = if !leaf_cert.decoded.is_empty() {
                     leaf_cert.decoded[335 + 32..335 + 64]
                         .iter()
                         .rev()

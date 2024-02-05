@@ -1,9 +1,9 @@
 use std::{io::Write, path::PathBuf, rc::Rc};
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result};
 use snark_verifier_sdk::{
     gen_pk,
-    halo2::{gen_proof_shplonk, gen_snark_shplonk, PoseidonTranscript},
+    halo2::{gen_snark_shplonk, PoseidonTranscript},
     read_pk,
     snark_verifier::{
         halo2_base::{
@@ -12,9 +12,8 @@ use snark_verifier_sdk::{
                 flex_gate::MultiPhaseThreadBreakPoints,
             },
             halo2_proofs::{
-                dev::MockProver,
                 halo2curves::bn256::{Bn256, Fq, Fr, G1Affine},
-                plonk::{keygen_pk, keygen_vk, Circuit, ProvingKey},
+                plonk::{Circuit, ProvingKey},
                 poly::{
                     commitment::{Params, ParamsProver},
                     kzg::{
@@ -29,12 +28,11 @@ use snark_verifier_sdk::{
             utils::fs::gen_srs,
             AssignedValue,
         },
-        loader::evm::{self, EvmLoader},
-        pcs::kzg::KzgAs,
+        loader::evm::{EvmLoader},
         system::halo2::{compile, transcript::evm::EvmTranscript, Config},
         verifier::SnarkVerifier,
     },
-    NativeLoader, PlonkVerifier, GWC, SHPLONK,
+    NativeLoader, PlonkVerifier, SHPLONK,
 };
 
 use crate::{circuit::ecdsa_verify, ECDSAInput};
@@ -249,20 +247,13 @@ impl Default for ECDSAProver {
 mod tests {
     use p256::{
         ecdsa::{signature::hazmat::PrehashVerifier, Signature, VerifyingKey},
-        EncodedPoint, PublicKey,
     };
-    use snark_verifier_sdk::snark_verifier::{
-        halo2_base::{
-            halo2_proofs::halo2curves::{secp256r1::Fq, serde::SerdeObject},
-            utils::{biguint_to_fe, fe_to_biguint, modulus, ScalarField},
-        },
-        util::arithmetic::PrimeField,
-    };
+    
 
     use super::*;
 
-    use crate::halo2curves::secp256r1::Secp256r1Affine as Affine;
-    use crate::{halo2_proofs::arithmetic::CurveAffine, ECDSAInput};
+    
+    use crate::{ECDSAInput};
 
     #[test]
     fn test_p256_ecdsa() {

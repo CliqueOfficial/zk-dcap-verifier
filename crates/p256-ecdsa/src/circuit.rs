@@ -1,24 +1,17 @@
-use std::path::{Path, PathBuf};
+
 
 use anyhow::Result;
 use snark_verifier_sdk::{
-    halo2::{gen_proof, gen_proof_shplonk},
     snark_verifier::{
         halo2_base::{
             gates::{circuit::builder::BaseCircuitBuilder, GateChip, GateInstructions, RangeChip},
             halo2_proofs::{
                 halo2curves::{
-                    bn256::{Bn256, Fr},
+                    bn256::{Fr},
                     secp256r1::{Fp, Fq, Secp256r1Affine as Affine},
                 },
-                plonk::{keygen_pk, keygen_vk, Circuit},
-                poly::kzg::{
-                    commitment::ParamsKZG,
-                    multiopen::{ProverSHPLONK, VerifierSHPLONK},
-                },
             },
-            utils::{fs::gen_srs, BigPrimeField, ScalarField},
-            AssignedValue, Context,
+            AssignedValue,
         },
         halo2_ecc::{
             ecc::{ecdsa::ecdsa_verify_no_pubkey_check, EccChip},

@@ -1,4 +1,4 @@
-use std::io::{BufReader, Write};
+use std::io::{BufReader};
 
 use anyhow::{anyhow, Result};
 use p256_ecdsa::{
@@ -21,7 +21,7 @@ use p256_ecdsa::{
     halo2curves::bn256::{Bn256, Fr, G1Affine},
     snark_verifier::loader::native::NativeLoader,
     snark_verifier_sdk::halo2::PoseidonTranscript,
-    ECDSAInput, ECDSAProver,
+    ECDSAInput,
 };
 use structopt::StructOpt;
 

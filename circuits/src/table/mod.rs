@@ -3,10 +3,10 @@ use halo2_base::halo2_proofs::{
     plonk::{ConstraintSystem, Error, TableColumn},
 };
 use halo2_base::utils::PrimeField;
-use std::fs::File;
-use std::io::{BufRead, BufReader};
+
+
 use std::marker::PhantomData;
-use std::str::FromStr;
+
 
 pub const BIT_COLUMN_COUNT: u8 = 4;
 
@@ -26,7 +26,7 @@ impl<F: PrimeField> BitDecompositionTableConfig<F> {
         let value_encoded = meta.lookup_table_column();
         let value_decoded = meta.lookup_table_column();
         let mut bit_decompositions = vec![];
-        for i in 0..BIT_COLUMN_COUNT {
+        for _i in 0..BIT_COLUMN_COUNT {
             bit_decompositions.push(meta.lookup_table_column());
         }
 
@@ -74,7 +74,7 @@ impl<F: PrimeField> BitDecompositionTableConfig<F> {
                     || "value_encoded",
                     self.value_encoded,
                     0,
-                    || Value::known(F::from_u128(0 as u128)),
+                    || Value::known(F::from_u128(0_u128)),
                 )?;
                 // Assign each character value that corresponds to its base64 encoded value
                 const equal: char = '=';
@@ -122,7 +122,7 @@ impl<F: PrimeField> BitDecompositionTableConfig<F> {
                     || "value_decoded",
                     self.value_decoded,
                     0,
-                    || Value::known(F::from_u128(0 as u128)),
+                    || Value::known(F::from_u128(0_u128)),
                 )?;
 
                 // Assign bit decompositions for each value_encoded and value_decoded value
