@@ -1,4 +1,4 @@
-use std::io::{BufReader};
+use std::io::BufReader;
 
 use anyhow::{anyhow, Result};
 use p256_ecdsa::{
@@ -58,12 +58,6 @@ impl Cli {
                     .ok_or(anyhow!("Pubkey should be uncompressed format"))?;
 
                 let input = ECDSAInput::new(&msghash, r, s, x, y)?;
-                // let proof = ECDSAProver::default().create_proof(input).unwrap();
-                //     {
-                //         let mut f = std::fs::File::create("proof.bin").unwrap();
-                //         f.write_all(hex::encode(&proof).as_bytes()).unwrap();
-                //         f.flush().unwrap();
-                //     }
 
                 Self::inner_verify_proof(&proof, input)
                     .then_some(())
