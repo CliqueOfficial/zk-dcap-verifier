@@ -1,0 +1,16 @@
+[package]
+name = "zk-clique"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+structopt = { version = "0.3" }
+serde_json = "1.0.113"
+p256-ecdsa = { path = "../crates/p256-ecdsa" }
+hex = "0.4.3"
+anyhow = "1.0.79"
+
+[build-dependencies]
+p256-ecdsa = { path = "../crates/p256-ecdsa" }

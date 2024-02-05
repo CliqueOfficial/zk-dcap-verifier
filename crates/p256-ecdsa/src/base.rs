@@ -89,6 +89,10 @@ where
     }
 }
 
+// TODO:
+// - [ ] new from params
+// - [ ] separate methods for params generates
+
 pub struct ECDSAProver {
     pk: ProvingKey<G1Affine>,
     params: ParamsKZG<Bn256>,
@@ -243,10 +247,14 @@ impl Default for ECDSAProver {
 
 #[cfg(test)]
 mod tests {
+    use p256::{
+        ecdsa::{signature::hazmat::PrehashVerifier, Signature, VerifyingKey},
+        EncodedPoint, PublicKey,
+    };
     use snark_verifier_sdk::snark_verifier::{
         halo2_base::{
-            halo2_proofs::halo2curves::secp256r1::Fq,
-            utils::{biguint_to_fe, fe_to_biguint, modulus},
+            halo2_proofs::halo2curves::{secp256r1::Fq, serde::SerdeObject},
+            utils::{biguint_to_fe, fe_to_biguint, modulus, ScalarField},
         },
         util::arithmetic::PrimeField,
     };
@@ -256,42 +264,22 @@ mod tests {
     use crate::halo2curves::secp256r1::Secp256r1Affine as Affine;
     use crate::{halo2_proofs::arithmetic::CurveAffine, ECDSAInput};
 
-    fn custom_parameters_ecdsa(sk: u64, msg_hash: u64, k: u64) -> ECDSAInput {
-        let sk = <Affine as CurveAffine>::ScalarExt::from(sk);
-        let pubkey = Affine::from(Affine::generator() * sk);
-        let msg_hash = <Affine as CurveAffine>::ScalarExt::from(msg_hash);
-
-        let k = <Affine as CurveAffine>::ScalarExt::from(k);
-        let k_inv = k.invert().unwrap();
-
-        let r_point = Affine::from(Affine::generator() * k).coordinates().unwrap();
-        let x = r_point.x();
-        let x_bigint = fe_to_biguint(x);
-
-        let r = biguint_to_fe::<Fq>(&(x_bigint % modulus::<Fq>()));
-        let s = k_inv * (msg_hash + (r * sk));
-
-        {
-            let s_inv = s.invert().unwrap();
-            let u1 = s_inv;
-            let u2 = r * s_inv;
-            let p1 = Affine::from(Affine::generator() * u1 + pubkey * u2);
-            let p = p1.coordinates().unwrap();
-            assert_eq!(p.x().to_repr(), r.to_repr());
-        }
-
-        ECDSAInput {
-            r,
-            s,
-            msghash: msg_hash,
-            x: pubkey.x,
-            y: pubkey.y,
-        }
-    }
-
     #[test]
     fn test_p256_ecdsa() {
-        let input = custom_parameters_ecdsa(1, 1, 1);
+        let msghash = "9c8adb93585642008f6defe84b014d3db86e65ec158f32c1fe8b78974123c264";
+        let signature = "89e7242b7a0be99f7c668a8bdbc1fcaf6fa7562dd28538dbab4b059e9d6955c2c434593d3ccb0e7e5825effb14e251e6e5efb738d6042647ed2e2faac9191718";
+        let pubkey = "04cd8fdae57e9fcc6638b7e0bdf1cfe6eb4783c29ed13916f10c121c70b7173dd61291422f9ef68a1b6a7e9cccbe7cc2c0738f81a996f7e62e9094c1f80bc0d788";
+
+        {
+            let pubkey = hex::decode(pubkey).unwrap();
+            let signature = hex::decode(signature).unwrap();
+            let msghash = hex::decode(msghash).unwrap();
+            let vk = VerifyingKey::from_sec1_bytes(&pubkey).unwrap();
+            let signature = Signature::from_slice(&signature).unwrap();
+            vk.verify_prehash(&msghash, &signature).unwrap();
+        }
+
+        let input = ECDSAInput::try_from_hex(msghash, signature, pubkey).unwrap();
         let prover = ECDSAProver::new();
         prover.create_proof(input).unwrap();
     }

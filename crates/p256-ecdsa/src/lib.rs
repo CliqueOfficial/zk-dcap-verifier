@@ -1,22 +1,25 @@
-use std::fs::File;
-use std::path::PathBuf;
+pub mod base;
+pub mod circuit;
 
-use anyhow::anyhow;
-use anyhow::Result;
 pub use halo2_base::halo2_proofs;
 pub use halo2_proofs::halo2curves;
 pub use snark_verifier::halo2_base;
 pub use snark_verifier::halo2_ecc;
+pub use snark_verifier_sdk;
 pub use snark_verifier_sdk::snark_verifier;
 
-pub mod base;
-pub mod circuit;
+pub use base::ECDSAProver;
 
-use halo2curves::secp256r1::{Fp, Fq};
-use snark_verifier_sdk::snark_verifier::halo2_base::halo2_proofs::halo2curves::bn256::Fr;
-use snark_verifier_sdk::snark_verifier::halo2_base::utils::decompose_biguint;
-use snark_verifier_sdk::snark_verifier::halo2_base::utils::fe_to_biguint;
-use snark_verifier_sdk::snark_verifier::halo2_base::utils::ScalarField;
+use anyhow::anyhow;
+use anyhow::Result;
+
+use snark_verifier_sdk::snark_verifier::halo2_base::{
+    halo2_proofs::halo2curves::{
+        bn256::Fr,
+        secp256r1::{Fp, Fq},
+    },
+    utils::{decompose_biguint, fe_to_biguint, ScalarField},
+};
 
 // Fq < Fp
 #[derive(Clone, Copy, Debug, Default)]
@@ -34,22 +37,26 @@ impl ECDSAInput {
         assert_eq!(r.len(), 32);
         assert_eq!(s.len(), 32);
         assert_eq!(x.len(), 32);
+        assert_eq!(y.len(), 32);
 
-        macro_rules! ensure_some {
-            ($o: expr) => {
-                if $o.is_some().into() {
-                    $o.unwrap()
+        macro_rules! from_bytes {
+            ($TT: ty, $o: expr) => {{
+                let mut a: Vec<_> = $o.into();
+                a.reverse();
+                let f = <$TT>::from_bytes(a.as_slice().try_into()?);
+                if f.is_some().into() {
+                    f.unwrap()
                 } else {
                     return Err(anyhow!("Invalid input"));
                 }
-            };
+            }};
         }
 
-        let msghash = ensure_some!(Fq::from_bytes(msghash.try_into()?));
-        let r = ensure_some!(Fq::from_bytes(r.try_into()?));
-        let s = ensure_some!(Fq::from_bytes(s.try_into()?));
-        let x = ensure_some!(Fp::from_bytes(x.try_into()?));
-        let y = ensure_some!(Fp::from_bytes(y.try_into()?));
+        let msghash = from_bytes!(Fq, msghash);
+        let r = from_bytes!(Fq, r);
+        let s = from_bytes!(Fq, s);
+        let x = from_bytes!(Fp, x);
+        let y = from_bytes!(Fp, y);
 
         Ok(Self {
             msghash,
@@ -58,6 +65,23 @@ impl ECDSAInput {
             x,
             y,
         })
+    }
+
+    pub fn try_from_hex(msghash: &str, signature: &str, pubkey: &str) -> Result<Self> {
+        let msghash = hex::decode(msghash)?;
+        let signature = hex::decode(signature)?;
+        let pubkey = hex::decode(pubkey)?;
+
+        let (r, s) = (signature.len() == 64)
+            .then(|| signature.split_at(32))
+            .ok_or(anyhow!("signature should be 64 bytes"))?;
+
+        let (x, y) = (pubkey.len() == 65)
+            .then(|| &pubkey[1..])
+            .map(|v| v.split_at(32))
+            .ok_or(anyhow!("Pubkey should be uncompressed format"))?;
+
+        ECDSAInput::new(&msghash, r, s, x, y)
     }
 
     pub fn as_instances(&self) -> Vec<Fr> {
