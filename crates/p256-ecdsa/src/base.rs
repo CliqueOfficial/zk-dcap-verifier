@@ -130,11 +130,7 @@ impl ECDSAProver {
         None
     }
 
-    pub fn new() -> Self {
-        if let Some(v) = Self::from_files() {
-            return v;
-        }
-
+    pub fn keygen() -> Result<()> {
         let params = gen_srs(18);
         let input = ECDSAInput::default();
         let pre_circuit = PreCircuit {
@@ -163,12 +159,16 @@ impl ECDSAProver {
             serde_json::to_writer_pretty(&mut file, &pinning).unwrap();
             pinning
         };
+        Ok(())
+    }
 
-        Self {
-            params,
-            pk,
-            pinning,
+    pub fn new() -> Self {
+        if let Some(v) = Self::from_files() {
+            return v;
         }
+
+        Self::keygen().unwrap();
+        Self::from_files().unwrap()
     }
 
     pub fn create_proof(&self, input: ECDSAInput) -> Result<Vec<u8>> {

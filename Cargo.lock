@@ -1033,6 +1033,7 @@ dependencies = [
 [[package]]
 name = "halo2-base"
 version = "0.4.0"
+source = "git+https://github.com/CliqueOfficial/halo2-lib?branch=ec-double-secp256r1#307601d61c22747ba0253c03e7ef44f03cdbe463"
 dependencies = [
  "getset",
  "halo2-axiom",
@@ -1110,6 +1111,7 @@ dependencies = [
 [[package]]
 name = "halo2-ecc"
 version = "0.4.0"
+source = "git+https://github.com/CliqueOfficial/halo2-lib?branch=ec-double-secp256r1#307601d61c22747ba0253c03e7ef44f03cdbe463"
 dependencies = [
  "halo2-base 0.4.0",
  "itertools 0.10.5",
