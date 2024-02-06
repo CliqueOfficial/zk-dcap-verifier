@@ -26,7 +26,7 @@ impl BinRepr for QECertData {
             return Err(anyhow!("Invalid length for QE Cert Data"));
         }
         let cert_type = u16::from_le_bytes([bytes[0], bytes[1]]);
-        let cert_size = u32::from_le_bytes(bytes[2..6].try_into().unwrap());
+        let cert_size = u32::from_le_bytes(bytes[2..6].try_into()?);
 
         let bytes = &bytes[6..];
         if bytes.len() != cert_size as usize {
@@ -68,10 +68,10 @@ impl BinRepr for ECDSAQuoteV3AuthData {
         if bytes.len() < 576 {
             return Err(anyhow!("Invalid length for ECDSA Quote V3 Auth Data",));
         }
-        let ecdsa256_bit_signature: [u8; 64] = bytes[0..64].try_into().unwrap();
-        let ecdsa_attestation_key: [u8; 64] = bytes[64..128].try_into().unwrap();
-        let raw_qe_report: [u8; 384] = bytes[128..512].try_into().unwrap();
-        let qe_report_signature: [u8; 64] = bytes[512..576].try_into().unwrap();
+        let ecdsa256_bit_signature: [u8; 64] = bytes[0..64].try_into()?;
+        let ecdsa_attestation_key: [u8; 64] = bytes[64..128].try_into()?;
+        let raw_qe_report: [u8; 384] = bytes[128..512].try_into()?;
+        let qe_report_signature: [u8; 64] = bytes[512..576].try_into()?;
 
         let bytes = &bytes[576..];
         let qu_auth_data_size = u16::from_le_bytes([bytes[0], bytes[1]]) as usize;
@@ -139,18 +139,10 @@ impl Verifiable for ECDSAQuoteV3AuthData {
 
         // STEP4: Parse quote cert  chain
         let (root, ca, pck) = {
-            // pem::parse_many(&self.qe_cert.cert_data).unwrap().iter().enumerate().for_each(
-            //     |(idx, pem)| {
-            //         let mut file = std::fs::File::create(format!("pem{}.pem", idx)).unwrap();
-            //         file.write_all(pem.to_string().as_bytes()).unwrap();
-            //         file.flush().unwrap();
-            //     },
-            // );
             let mut pems = pem::parse_many(&self.qe_cert.cert_data)?
                 .iter()
                 .map(|pem| x509_cert::Certificate::from_der(pem.contents()))
-                .collect::<Result<Vec<_>, _>>()
-                .unwrap();
+                .collect::<Result<Vec<_>, _>>()?;
 
             (
                 pems.pop().unwrap(),
