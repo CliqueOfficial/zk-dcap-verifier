@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["bin", "circuits", "crates/p256-ecdsa"]
+members = ["bin", "circuits", "crates/p256-ecdsa", "crates/dcap"]
 
 [patch."https://github.com/axiom-crypto/halo2-lib.git"]
 halo2-base = { git = "https://github.com/CliqueOfficial/halo2-lib", branch = "ec-double-secp256r1" }
