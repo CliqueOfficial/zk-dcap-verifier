@@ -1,6 +1,6 @@
 use std::{convert::TryInto, mem::MaybeUninit};
 
-use anyhow::{anyhow, Error, Result};
+use anyhow::{anyhow, Result};
 
 use super::traits::{BinRepr, Verifiable};
 

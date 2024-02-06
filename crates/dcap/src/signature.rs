@@ -14,9 +14,9 @@ where
 
     vk.verify_prehash(message.as_ref(), sig.as_ref()).unwrap();
     {
-        let m = hex::encode(message);
-        let s = hex::encode(sig.as_ref());
-        let p = hex::encode(vk.0.to_encoded_point(false).as_bytes());
+        let _m = hex::encode(message);
+        let _s = hex::encode(sig.as_ref());
+        let _p = hex::encode(vk.0.to_encoded_point(false).as_bytes());
     }
     Ok(())
 }

@@ -24,6 +24,7 @@ pub struct Tcb {
     pub comp_svn_array: [u8; 16],
 }
 
+#[allow(clippy::upper_case_acronyms)]
 pub struct PCK {
     inner: Certificate,
     pub fmspc: [u8; 6],
