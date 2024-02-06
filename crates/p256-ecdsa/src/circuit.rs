@@ -54,16 +54,5 @@ pub fn ecdsa_verify(
     let gate = GateChip::new();
     gate.assert_is_const(ctx, &res, &Fr::one());
 
-    // builder.calculate_params(Some(9));
-    // let kzg_params = gen_srs(params.degree);
-    // let vk = keygen_vk(&kzg_params, builder)?;
-    // let pk = keygen_pk(&kzg_params, vk, builder)?;
-    // gen_proof_shplonk(
-    //     &kzg_params,
-    //     &pk,
-    //     *builder,
-    //     vec![],
-    //     Some((&PathBuf::from("instance.bin"), &PathBuf::from("proof.bin"))),
-    // );
     Ok(())
 }

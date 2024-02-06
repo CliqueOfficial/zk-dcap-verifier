@@ -86,10 +86,6 @@ where
     }
 }
 
-// TODO:
-// - [ ] new from params
-// - [ ] separate methods for params generates
-
 pub struct ECDSAProver {
     pk: ProvingKey<G1Affine>,
     params: ParamsKZG<Bn256>,
