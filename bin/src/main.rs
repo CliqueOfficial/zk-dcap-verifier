@@ -51,6 +51,8 @@ enum P256Ecdsa {
         #[structopt(long)]
         pubkey: String,
         #[structopt(long)]
+        evm: bool,
+        #[structopt(long)]
         proof: String,
     },
     #[structopt(about = "Create a hex-encoded proof with 0x prefix based on given input")]
@@ -61,6 +63,8 @@ enum P256Ecdsa {
         signature: String,
         #[structopt(long)]
         pubkey: String,
+        #[structopt(long)]
+        evm: bool,
         #[structopt(
             short,
             long,
@@ -99,6 +103,7 @@ impl P256Ecdsa {
                 signature,
                 pubkey,
                 proof,
+                evm,
             } => {
                 let [msghash, signature, pubkey, proof] =
                     [msghash, signature, pubkey, proof].map(Self::read_raw_or_file);
@@ -107,7 +112,7 @@ impl P256Ecdsa {
 
                 println!(
                     "{}",
-                    Self::inner_verify_proof(&hex::decode(&proof[2..])?, input)
+                    Self::inner_verify_proof(&hex::decode(&proof[2..])?, input, evm)
                 );
                 Ok(())
             }
@@ -117,12 +122,13 @@ impl P256Ecdsa {
                 signature,
                 pubkey,
                 output,
+                evm,
             } => {
                 let [msghash, signature, pubkey] =
                     [msghash, signature, pubkey].map(Self::read_raw_or_file);
                 let input = ECDSAInput::try_from_hex(&msghash, &signature, &pubkey)?;
                 let prover = ECDSAProver::new(Self::pk(), Self::params(), Self::pinning());
-                let proof = ["0x", &hex::encode(prover.create_proof(input)?)].concat();
+                let proof = ["0x", &hex::encode(prover.create_proof(input, evm)?)].concat();
                 if let Some(output) = output {
                     std::fs::write(output, proof.as_bytes())?;
                 } else {
@@ -132,8 +138,7 @@ impl P256Ecdsa {
             }
 
             Self::GenSolidity { output } => {
-                let prover = ECDSAProver::new(Self::pk(), Self::params(), Self::pinning());
-                let code = prover.gen_evm_verifier()?;
+                let code = Self::gen_evm_verifier()?;
                 if let Some(output) = output {
                     std::fs::write(output, code.as_bytes())?;
                 } else {
@@ -149,6 +154,11 @@ impl P256Ecdsa {
     fn pinning() -> (BaseCircuitParams, MultiPhaseThreadBreakPoints) {
         let raw_pinning = std::fs::read_to_string("./params/pinning.json").unwrap();
         serde_json::from_str(&raw_pinning).unwrap()
+    }
+
+    fn gen_evm_verifier() -> Result<String> {
+        let prover = ECDSAProver::new(Self::pk(), Self::params(), Self::pinning());
+        prover.gen_evm_verifier()
     }
 
     fn pk() -> ProvingKey<G1Affine> {
@@ -179,19 +189,28 @@ impl P256Ecdsa {
         ParamsKZG::<Bn256>::read(&mut reader).unwrap()
     }
 
-    fn inner_verify_proof(proof: &[u8], input: ECDSAInput) -> bool {
-        let vk = Self::vk();
-        let params = Self::params();
-        let mut transcript = PoseidonTranscript::<NativeLoader, &[u8]>::new::<0>(proof);
+    fn inner_verify_proof(proof: &[u8], input: ECDSAInput, evm: bool) -> bool {
+        if evm {
+            false
+            // let sol = Self::gen_evm_verifier().unwrap();
+            // let bytecode = compile_solidity(&sol);
+            // let calldata = encode_calldata(&[input.as_instances()], &proof);
+            // snark_verifier_sdk::snark_verifier::loader::evm::deploy_and_call(bytecode, calldata)
+            //     .is_ok()
+        } else {
+            let vk = Self::vk();
+            let params = Self::params();
+            let mut transcript = PoseidonTranscript::<NativeLoader, &[u8]>::new::<0>(proof);
 
-        verify_proof::<KZGCommitmentScheme<Bn256>, VerifierSHPLONK<'_, Bn256>, _, _, _>(
-            params.verifier_params(),
-            &vk,
-            SingleStrategy::new(&params),
-            &[&[input.as_instances().as_slice()]],
-            &mut transcript,
-        )
-        .is_ok()
+            verify_proof::<KZGCommitmentScheme<Bn256>, VerifierSHPLONK<'_, Bn256>, _, _, _>(
+                params.verifier_params(),
+                &vk,
+                SingleStrategy::new(&params),
+                &[&[input.as_instances().as_slice()]],
+                &mut transcript,
+            )
+            .is_ok()
+        }
     }
 }
 
@@ -211,6 +230,7 @@ mod tests {
             signature: "0x89e7242b7a0be99f7c668a8bdbc1fcaf6fa7562dd28538dbab4b059e9d6955c2c434593d3ccb0e7e5825effb14e251e6e5efb738d6042647ed2e2faac9191718".into(), 
             pubkey: "0x04cd8fdae57e9fcc6638b7e0bdf1cfe6eb4783c29ed13916f10c121c70b7173dd61291422f9ef68a1b6a7e9cccbe7cc2c0738f81a996f7e62e9094c1f80bc0d788".into(), 
             proof: include_str!("../assets/proof.bin").into(),
+            evm: false,
         };
         cli.run()
     }

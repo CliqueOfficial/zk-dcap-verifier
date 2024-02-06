@@ -2,6 +2,7 @@ use std::{path::PathBuf, rc::Rc};
 
 use anyhow::Result;
 use snark_verifier_sdk::{
+    evm::encode_calldata,
     gen_pk,
     halo2::{gen_snark_shplonk, PoseidonTranscript},
     read_pk,
@@ -18,7 +19,7 @@ use snark_verifier_sdk::{
                     commitment::{Params, ParamsProver},
                     kzg::{
                         commitment::{KZGCommitmentScheme, ParamsKZG},
-                        multiopen::VerifierSHPLONK,
+                        multiopen::{ProverSHPLONK, VerifierSHPLONK},
                         strategy::SingleStrategy,
                     },
                 },
@@ -27,7 +28,7 @@ use snark_verifier_sdk::{
             utils::fs::gen_srs,
             AssignedValue,
         },
-        loader::evm::EvmLoader,
+        loader::evm::{compile_solidity, EvmLoader},
         system::halo2::{compile, transcript::evm::EvmTranscript, Config},
         verifier::SnarkVerifier,
     },
@@ -177,7 +178,7 @@ impl ECDSAProver {
         }
     }
 
-    pub fn create_proof(&self, input: ECDSAInput) -> Result<Vec<u8>> {
+    pub fn create_proof(&self, input: ECDSAInput, evm: bool) -> Result<Vec<u8>> {
         let pre_circuit = PreCircuit {
             private_inputs: input,
             f: ecdsa_verify,
@@ -188,16 +189,42 @@ impl ECDSAProver {
             Some(self.pinning.clone()),
             &self.params,
         )?;
+        let instances = input.as_instances();
 
-        let snark = gen_snark_shplonk(&self.params, &self.pk, circuit, Option::<&PathBuf>::None);
-        let accept = {
+        let proof = if evm {
+            snark_verifier_sdk::evm::gen_evm_proof_shplonk(
+                &self.params,
+                &self.pk,
+                circuit,
+                vec![instances.clone()],
+            )
+        } else {
+            snark_verifier_sdk::halo2::gen_proof::<
+                _,
+                ProverSHPLONK<'_, _>,
+                VerifierSHPLONK<'_, Bn256>,
+            >(
+                &self.params,
+                &self.pk,
+                circuit,
+                vec![instances.clone()],
+                None,
+            )
+        };
+
+        let accept = if evm {
+            let sol = self.gen_evm_verifier().unwrap();
+            let bytecode = compile_solidity(&sol);
+            let calldata = encode_calldata(&[instances], &proof);
+            snark_verifier_sdk::snark_verifier::loader::evm::deploy_and_call(bytecode, calldata)
+                .is_ok()
+        } else {
             let vk = self.pk.get_vk();
             let mut circuit =
                 pre_circuit.create_circuit(CircuitBuilderStage::Keygen, None, &self.params)?;
 
             let mut transcript =
-                PoseidonTranscript::<NativeLoader, &[u8]>::new::<0>(snark.proof.as_slice());
-            let instances = snark.instances[0].as_slice();
+                PoseidonTranscript::<NativeLoader, &[u8]>::new::<0>(proof.as_slice());
 
             circuit.clear();
             snark_verifier_sdk::snark_verifier::halo2_base::halo2_proofs::plonk::verify_proof::<
@@ -210,13 +237,13 @@ impl ECDSAProver {
                 self.params.verifier_params(),
                 vk,
                 SingleStrategy::new(&self.params),
-                &[&[instances]],
+                &[&[&instances]],
                 &mut transcript,
             )
             .is_ok()
         };
         assert!(accept);
-        Ok(snark.proof)
+        Ok(proof)
     }
 
     pub fn gen_evm_verifier(&self) -> Result<String> {
@@ -278,6 +305,6 @@ mod tests {
 
         let input = ECDSAInput::try_from_hex(msghash, signature, pubkey).unwrap();
         let prover = ECDSAProver::default();
-        prover.create_proof(input).unwrap();
+        prover.create_proof(input, false).unwrap();
     }
 }
