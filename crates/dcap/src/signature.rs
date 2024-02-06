@@ -13,14 +13,10 @@ where
     let message = message.as_slice();
 
     vk.verify_prehash(message.as_ref(), sig.as_ref()).unwrap();
-    {
-        let _m = hex::encode(message);
-        let _s = hex::encode(sig.as_ref());
-        let _p = hex::encode(vk.0.to_encoded_point(false).as_bytes());
-    }
     Ok(())
 }
 
+#[derive(Debug, Clone)]
 pub struct VerifyingKey(pub p256::ecdsa::VerifyingKey);
 
 impl VerifyingKey {
@@ -58,6 +54,11 @@ impl VerifyingKey {
 
     pub fn from_spki(spki: &SubjectPublicKeyInfoOwned) -> Result<Self> {
         Self::from_sec1_bytes(spki.subject_public_key.raw_bytes())
+    }
+
+    pub fn to_bytes(self) -> Vec<u8> {
+        let ret = self.0.to_encoded_point(false);
+        ret.to_bytes().to_vec()
     }
 }
 
