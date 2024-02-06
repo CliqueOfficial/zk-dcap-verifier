@@ -1,37 +1,37 @@
 use std::{path::PathBuf, rc::Rc};
 
 use anyhow::Result;
-use snark_verifier_sdk::{
-    gen_pk,
-    halo2::{gen_snark_shplonk, PoseidonTranscript},
-    read_pk,
-    snark_verifier::{
-        halo2_base::{
-            gates::{
-                circuit::{builder::BaseCircuitBuilder, BaseCircuitParams, CircuitBuilderStage},
-                flex_gate::MultiPhaseThreadBreakPoints,
-            },
-            halo2_proofs::{
-                halo2curves::bn256::{Bn256, Fq, Fr, G1Affine},
-                plonk::{Circuit, ProvingKey},
-                poly::{
-                    commitment::{Params, ParamsProver},
-                    kzg::{
-                        commitment::{KZGCommitmentScheme, ParamsKZG},
-                        multiopen::VerifierSHPLONK,
-                        strategy::SingleStrategy,
-                    },
-                },
-                SerdeFormat,
-            },
-            utils::fs::gen_srs,
-            AssignedValue,
+use common::{
+    halo2_base::{
+        gates::{
+            circuit::{builder::BaseCircuitBuilder, BaseCircuitParams, CircuitBuilderStage},
+            flex_gate::MultiPhaseThreadBreakPoints,
         },
-        loader::evm::EvmLoader,
+        utils::fs::gen_srs,
+        AssignedValue,
+    },
+    halo2_proofs::{
+        plonk::{Circuit, ProvingKey},
+        poly::{
+            commitment::{Params, ParamsProver},
+            kzg::{
+                commitment::{KZGCommitmentScheme, ParamsKZG},
+                multiopen::{ProverSHPLONK, VerifierSHPLONK},
+                strategy::SingleStrategy,
+            },
+        },
+        SerdeFormat,
+    },
+    halo2curves::bn256::{Bn256, Fq, Fr, G1Affine},
+    snark_verifier::{
+        loader::evm::{compile_solidity, EvmLoader},
         system::halo2::{compile, transcript::evm::EvmTranscript, Config},
         verifier::SnarkVerifier,
     },
-    NativeLoader, PlonkVerifier, SHPLONK,
+    snark_verifier_sdk::{
+        self, evm::encode_calldata, gen_pk, halo2::PoseidonTranscript, read_pk, NativeLoader,
+        PlonkVerifier, SHPLONK,
+    },
 };
 
 use crate::{circuit::ecdsa_verify, ECDSAInput};
@@ -177,7 +177,7 @@ impl ECDSAProver {
         }
     }
 
-    pub fn create_proof(&self, input: ECDSAInput) -> Result<Vec<u8>> {
+    pub fn create_proof(&self, input: ECDSAInput, evm: bool) -> Result<Vec<u8>> {
         let pre_circuit = PreCircuit {
             private_inputs: input,
             f: ecdsa_verify,
@@ -188,38 +188,67 @@ impl ECDSAProver {
             Some(self.pinning.clone()),
             &self.params,
         )?;
+        let instances = input.as_instances();
 
-        let snark = gen_snark_shplonk(&self.params, &self.pk, circuit, Option::<&PathBuf>::None);
-        let accept = {
-            let vk = self.pk.get_vk();
-            let mut circuit =
-                pre_circuit.create_circuit(CircuitBuilderStage::Keygen, None, &self.params)?;
-
-            let mut transcript =
-                PoseidonTranscript::<NativeLoader, &[u8]>::new::<0>(snark.proof.as_slice());
-            let instances = snark.instances[0].as_slice();
-
-            circuit.clear();
-            snark_verifier_sdk::snark_verifier::halo2_base::halo2_proofs::plonk::verify_proof::<
-                KZGCommitmentScheme<Bn256>,
-                VerifierSHPLONK<'_, Bn256>,
-                _,
-                _,
-                _,
-            >(
-                self.params.verifier_params(),
-                vk,
-                SingleStrategy::new(&self.params),
-                &[&[instances]],
-                &mut transcript,
+        let proof = if evm {
+            snark_verifier_sdk::evm::gen_evm_proof_shplonk(
+                &self.params,
+                &self.pk,
+                circuit,
+                vec![instances.clone()],
             )
-            .is_ok()
+        } else {
+            snark_verifier_sdk::halo2::gen_proof::<
+                _,
+                ProverSHPLONK<'_, _>,
+                VerifierSHPLONK<'_, Bn256>,
+            >(
+                &self.params,
+                &self.pk,
+                circuit,
+                vec![instances.clone()],
+                None,
+            )
         };
-        assert!(accept);
-        Ok(snark.proof)
+
+        #[cfg(debug_assertions)]
+        {
+            let accept = if evm {
+                let sol = self.gen_evm_verifier().unwrap();
+                let bytecode = compile_solidity(&sol);
+                let calldata = encode_calldata(&[instances], &proof);
+                snark_verifier_sdk::snark_verifier::loader::evm::deploy_and_call(bytecode, calldata)
+                    .is_ok()
+            } else {
+                let vk = self.pk.get_vk();
+                let mut circuit =
+                    pre_circuit.create_circuit(CircuitBuilderStage::Keygen, None, &self.params)?;
+
+                let mut transcript =
+                    PoseidonTranscript::<NativeLoader, &[u8]>::new::<0>(proof.as_slice());
+
+                circuit.clear();
+                snark_verifier_sdk::snark_verifier::halo2_base::halo2_proofs::plonk::verify_proof::<
+                    KZGCommitmentScheme<Bn256>,
+                    VerifierSHPLONK<'_, Bn256>,
+                    _,
+                    _,
+                    _,
+                >(
+                    self.params.verifier_params(),
+                    vk,
+                    SingleStrategy::new(&self.params),
+                    &[&[&instances]],
+                    &mut transcript,
+                )
+                .is_ok()
+            };
+            assert!(accept);
+        }
+        Ok(proof)
     }
 
-    pub fn gen_evm_verifier(&self) -> String {
+    pub fn gen_evm_verifier(&self) -> Result<String> {
         let protocol = compile(
             &self.params,
             self.pk.get_vk(),
@@ -235,10 +264,10 @@ impl ECDSAProver {
         let instances = transcript.load_instances(vec![Self::INSTANCES_LEN]);
         let proof =
             PlonkVerifier::<SHPLONK>::read_proof(&vk, &protocol, &instances, &mut transcript)
-                .unwrap();
+                .map_err(|e| anyhow::anyhow!("{:?}", e))?;
 
         assert!(PlonkVerifier::<SHPLONK>::verify(&vk, &protocol, &instances, &proof).is_ok());
-        loader.solidity_code()
+        Ok(loader.solidity_code())
     }
 }
 
@@ -278,6 +307,7 @@ mod tests {
 
         let input = ECDSAInput::try_from_hex(msghash, signature, pubkey).unwrap();
         let prover = ECDSAProver::default();
-        prover.create_proof(input).unwrap();
+        prover.create_proof(input, false).unwrap();
+        prover.create_proof(input, true).unwrap();
     }
 }

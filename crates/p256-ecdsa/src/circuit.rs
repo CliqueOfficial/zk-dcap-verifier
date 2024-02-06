@@ -1,23 +1,17 @@
-
-
 use anyhow::Result;
-use snark_verifier_sdk::{
-    snark_verifier::{
-        halo2_base::{
-            gates::{circuit::builder::BaseCircuitBuilder, GateChip, GateInstructions, RangeChip},
-            halo2_proofs::{
-                halo2curves::{
-                    bn256::{Fr},
-                    secp256r1::{Fp, Fq, Secp256r1Affine as Affine},
-                },
-            },
-            AssignedValue,
-        },
-        halo2_ecc::{
-            ecc::{ecdsa::ecdsa_verify_no_pubkey_check, EccChip},
-            fields::FieldChip,
-            secp256r1::{FpChip, FqChip},
-        },
+use common::{
+    halo2_base::{
+        gates::{circuit::builder::BaseCircuitBuilder, GateChip, GateInstructions, RangeChip},
+        AssignedValue,
+    },
+    halo2_ecc::{
+        ecc::{ecdsa::ecdsa_verify_no_pubkey_check, EccChip},
+        fields::FieldChip,
+        secp256r1::{FpChip, FqChip},
+    },
+    halo2curves::{
+        bn256::Fr,
+        secp256r1::{Fp, Fq, Secp256r1Affine as Affine},
     },
 };
 
