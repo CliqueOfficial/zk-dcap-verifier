@@ -108,7 +108,7 @@ impl Verifiable for ECDSAQuoteV3AuthData {
     type Output = ();
     type Payload = Vec<u8>;
 
-    fn verify(&self, payload: Option<&Self::Payload>) -> Result<Self::Output> {
+    fn verify(&self, payload: &Self::Payload) -> Result<Self::Output> {
         // STEP3: Verify the Enclave ID
         let qe_report = self.qe_report();
         let enclave_id = EnclaveId::get();
@@ -213,13 +213,11 @@ impl Verifiable for ECDSAQuoteV3AuthData {
         // verify_signature(pck.ts, self.qe_report_signature.as_slice(), self.raw_qe_report.as_slice())?;
 
         // STEP9: Verify local attestation sig
-        if let Some(body) = payload {
-            verify_signature(
-                &VerifyingKey::from_untagged_bytes(self.ecdsa_attestation_key)?,
-                self.ecdsa256_bit_signature,
-                body,
-            )?;
-        }
+        verify_signature(
+            &VerifyingKey::from_untagged_bytes(self.ecdsa_attestation_key)?,
+            self.ecdsa256_bit_signature,
+            payload.as_slice(),
+        )?;
 
         Ok(())
     }

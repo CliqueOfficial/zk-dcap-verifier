@@ -59,7 +59,7 @@ impl Verifiable for Header {
     type Payload = ();
     type Output = ();
 
-    fn verify(&self, _: Option<&Self::Payload>) -> Result<()> {
+    fn verify(&self, _: &Self::Payload) -> Result<()> {
         use hex_literal::hex;
 
         const SUPPORTED_VERSION: u16 = 3;
@@ -140,14 +140,14 @@ pub type RawSigner = [u8; 32];
 
 impl Verifiable for EnclaveReport {
     type Output = ();
-    type Payload = (Vec<RawEnclaveId>, Vec<RawSigner>);
+    type Payload = Option<(Vec<RawEnclaveId>, Vec<RawSigner>)>;
 
-    fn verify(&self, payload: Option<&Self::Payload>) -> Result<Self::Output> {
+    fn verify(&self, payload: &Self::Payload) -> Result<Self::Output> {
         if payload.is_none() {
             return Ok(());
         }
 
-        let (trusted_enclaves, trusted_signers) = payload.unwrap();
+        let (trusted_enclaves, trusted_signers) = payload.as_ref().unwrap();
         if !trusted_enclaves.contains(&self.mr_enclave) {
             return Err(anyhow!("Enclave not trusted"));
         }
@@ -224,16 +224,16 @@ where
     type Payload = ();
     type Output = ();
 
-    fn verify(&self, _: Option<&Self::Payload>) -> Result<()> {
+    fn verify(&self, _: &Self::Payload) -> Result<()> {
         // STEP1: parse and verify header
-        self.body.header.verify(None)?;
+        self.body.header.verify(&())?;
 
         // STEP2: Verify enclave report MRENCLAVE and MRSIDNER
         //TODO: pass through the trusted enclave list and signer list
-        self.body.enclave_report.verify(None)?;
+        self.body.enclave_report.verify(&None)?;
 
         let raw_quote_body = self.body.to_bytes()?;
-        self.signature.verify(Some(&raw_quote_body))?;
+        self.signature.verify(&raw_quote_body)?;
 
         Ok(())
     }
@@ -273,7 +273,7 @@ mod tests {
         let quote = Quote::<ECDSAQuoteV3AuthData>::from_bytes(&QUOTE_0)?;
         let bytes = quote.to_bytes()?;
         assert_eq!(bytes.as_slice(), QUOTE_0.as_slice());
-        quote.verify(None)?;
+        quote.verify(&())?;
         Ok(())
     }
 }
