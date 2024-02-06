@@ -517,6 +517,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "common"
+version = "0.1.0"
+dependencies = [
+ "snark-verifier-sdk",
+]
+
+[[package]]
 name = "const-cstr"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1808,10 +1815,10 @@ name = "p256-ecdsa"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "common",
  "hex",
  "p256",
  "serde_json",
- "snark-verifier-sdk",
 ]
 
 [[package]]
@@ -3280,6 +3287,7 @@ name = "zk-clique"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "common",
  "hex",
  "p256-ecdsa",
  "serde_json",

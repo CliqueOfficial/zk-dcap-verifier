@@ -1,7 +1,7 @@
 use std::{io::BufReader, path::PathBuf};
 
 use anyhow::{anyhow, Result};
-use p256_ecdsa::{
+use common::{
     halo2_base::gates::{
         circuit::{builder::BaseCircuitBuilder, BaseCircuitParams},
         flex_gate::MultiPhaseThreadBreakPoints,
@@ -19,10 +19,13 @@ use p256_ecdsa::{
         SerdeFormat,
     },
     halo2curves::bn256::{Bn256, Fr, G1Affine},
-    snark_verifier::loader::native::NativeLoader,
-    snark_verifier_sdk::halo2::PoseidonTranscript,
-    ECDSAInput, ECDSAProver,
+    snark_verifier::{
+        self,
+        loader::{evm::compile_solidity, native::NativeLoader},
+    },
+    snark_verifier_sdk::{evm::encode_calldata, halo2::PoseidonTranscript},
 };
+use p256_ecdsa::{ECDSAInput, ECDSAProver};
 use structopt::StructOpt;
 
 #[derive(Debug, StructOpt)]
@@ -73,7 +76,26 @@ enum P256Ecdsa {
         )]
         output: Option<PathBuf>,
     },
+    #[structopt(about = "Generate solidity verifier for p256-ecdsa circuit")]
     GenSolidity {
+        #[structopt(
+            short,
+            long,
+            parse(from_os_str),
+            about = "Optional, by default it prints to stdout"
+        )]
+        output: Option<PathBuf>,
+    },
+    #[structopt(about = "Encode instances and proof as evm calldata")]
+    GenCalldata {
+        #[structopt(long)]
+        msghash: String,
+        #[structopt(long)]
+        signature: String,
+        #[structopt(long)]
+        pubkey: String,
+        #[structopt(long)]
+        proof: String,
         #[structopt(
             short,
             long,
@@ -136,6 +158,25 @@ impl P256Ecdsa {
                 }
                 Ok(())
             }
+            Self::GenCalldata {
+                msghash,
+                signature,
+                pubkey,
+                output,
+                proof,
+            } => {
+                let [msghash, signature, pubkey, proof] =
+                    [msghash, signature, pubkey, proof].map(Self::read_raw_or_file);
+                let input = ECDSAInput::try_from_hex(&msghash, &signature, &pubkey)?;
+                let calldata = encode_calldata(&[input.as_instances()], &hex::decode(&proof[2..])?);
+                let calldata = ["0x", &hex::encode(calldata)].concat();
+                if let Some(output) = output {
+                    std::fs::write(output, calldata.as_bytes())?;
+                } else {
+                    println!("{}", calldata);
+                }
+                Ok(())
+            }
 
             Self::GenSolidity { output } => {
                 let code = Self::gen_evm_verifier()?;
@@ -191,12 +232,10 @@ impl P256Ecdsa {
 
     fn inner_verify_proof(proof: &[u8], input: ECDSAInput, evm: bool) -> bool {
         if evm {
-            false
-            // let sol = Self::gen_evm_verifier().unwrap();
-            // let bytecode = compile_solidity(&sol);
-            // let calldata = encode_calldata(&[input.as_instances()], &proof);
-            // snark_verifier_sdk::snark_verifier::loader::evm::deploy_and_call(bytecode, calldata)
-            //     .is_ok()
+            let sol = Self::gen_evm_verifier().unwrap();
+            let bytecode = compile_solidity(&sol);
+            let calldata = encode_calldata(&[input.as_instances()], proof);
+            snark_verifier::loader::evm::deploy_and_call(bytecode, calldata).is_ok()
         } else {
             let vk = Self::vk();
             let params = Self::params();
@@ -216,6 +255,10 @@ impl P256Ecdsa {
 
 fn main() -> Result<()> {
     let cli = Cli::from_args();
+    let params = std::path::PathBuf::from("./params");
+    if !params.exists() {
+        return Err(anyhow!("You may forget to download params or run `setup` first. If it doesn't work, please remove `params` directory and try again."));
+    }
     cli.run()
 }
 

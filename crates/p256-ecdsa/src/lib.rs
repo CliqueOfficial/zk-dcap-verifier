@@ -1,24 +1,16 @@
 pub mod base;
 pub mod circuit;
 
-pub use halo2_base::halo2_proofs;
-pub use halo2_proofs::halo2curves;
-pub use snark_verifier::halo2_base;
-pub use snark_verifier::halo2_ecc;
-pub use snark_verifier_sdk;
-pub use snark_verifier_sdk::snark_verifier;
-
 pub use base::ECDSAProver;
 
-use anyhow::anyhow;
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 
-use snark_verifier_sdk::snark_verifier::halo2_base::{
-    halo2_proofs::halo2curves::{
+use common::{
+    halo2_base::utils::{decompose_biguint, fe_to_biguint, ScalarField},
+    halo2curves::{
         bn256::Fr,
         secp256r1::{Fp, Fq},
     },
-    utils::{decompose_biguint, fe_to_biguint, ScalarField},
 };
 
 // Fq < Fp
