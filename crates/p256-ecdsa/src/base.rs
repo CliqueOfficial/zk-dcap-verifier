@@ -219,7 +219,7 @@ impl ECDSAProver {
         Ok(snark.proof)
     }
 
-    pub fn gen_evm_verifier(&self) -> String {
+    pub fn gen_evm_verifier(&self) -> Result<String> {
         let protocol = compile(
             &self.params,
             self.pk.get_vk(),
@@ -235,10 +235,10 @@ impl ECDSAProver {
         let instances = transcript.load_instances(vec![Self::INSTANCES_LEN]);
         let proof =
             PlonkVerifier::<SHPLONK>::read_proof(&vk, &protocol, &instances, &mut transcript)
-                .unwrap();
+                .map_err(|e| anyhow::anyhow!("{:?}", e))?;
 
         assert!(PlonkVerifier::<SHPLONK>::verify(&vk, &protocol, &instances, &proof).is_ok());
-        loader.solidity_code()
+        Ok(loader.solidity_code())
     }
 }
 
