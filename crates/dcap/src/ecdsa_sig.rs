@@ -174,6 +174,16 @@ impl Verifiable for ECDSAQuoteV3AuthData {
             }
         }
 
+        // Verify the QE Report's Hash
+        let hash = Sha256::new()
+            .chain_update(self.ecdsa_attestation_key.as_slice())
+            .chain_update(self.qe_auth_data.as_slice())
+            .finalize();
+        let expected_hash = &self.qe_report().report_data[..32];
+        if hash.as_slice() != expected_hash {
+            return Err(anyhow!("QE Report's Hash is Invalid"));
+        }
+
         //STEP7: Verify cert chain
         verify_signature(
             &VerifyingKey::from_spki(&root.tbs_certificate.subject_public_key_info)?,
@@ -198,19 +208,6 @@ impl Verifiable for ECDSAQuoteV3AuthData {
             self.qe_report_signature,
             self.raw_qe_report,
         )?;
-
-        // Verify the QE Report's Hash
-        let hash = Sha256::new()
-            .chain_update(self.ecdsa_attestation_key.as_slice())
-            .chain_update(self.qe_auth_data.as_slice())
-            .finalize();
-        let expected_hash = &self.qe_report().report_data[..32];
-
-        if hash.as_slice() != expected_hash {
-            return Err(anyhow!("QE Report's Hash is Invalid"));
-        }
-
-        // verify_signature(pck.ts, self.qe_report_signature.as_slice(), self.raw_qe_report.as_slice())?;
 
         // STEP9: Verify local attestation sig
         verify_signature(
