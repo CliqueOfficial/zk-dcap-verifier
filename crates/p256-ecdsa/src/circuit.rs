@@ -19,7 +19,7 @@ use crate::ECDSAInput;
 
 pub fn ecdsa_verify(
     builder: &mut BaseCircuitBuilder<Fr>,
-    input: ECDSAInput,
+    input: Vec<ECDSAInput>,
     make_public: &mut Vec<AssignedValue<Fr>>,
 ) -> Result<()> {
     const LOOKUP_BITS: usize = 17;
@@ -34,7 +34,7 @@ pub fn ecdsa_verify(
 
     let ctx = builder.main(0);
 
-    {
+    for input in input.iter() {
         let [m, r, s] = [input.msghash, input.r, input.s].map(|x| fq_chip.load_private(ctx, x));
 
         make_public.extend(m.limbs());
@@ -49,7 +49,7 @@ pub fn ecdsa_verify(
         let res =
             ecdsa_verify_no_pubkey_check::<_, Fp, Fq, Affine>(&ecc_chip, ctx, pk, r, s, m, 4, 4);
         gate.assert_is_const(ctx, &res, &Fr::one());
-    };
+    }
 
     Ok(())
 }

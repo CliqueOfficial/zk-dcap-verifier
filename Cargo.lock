@@ -3370,6 +3370,7 @@ dependencies = [
  "common",
  "hex",
  "p256-ecdsa",
+ "serde",
  "serde_json",
  "structopt",
 ]

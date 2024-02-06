@@ -9,18 +9,32 @@ use common::{
     halo2_base::utils::{decompose_biguint, fe_to_biguint, ScalarField},
     halo2curves::{
         bn256::Fr,
-        secp256r1::{Fp, Fq},
+        secp256r1::{Fp, Fq, Secp256r1Affine},
     },
 };
 
 // Fq < Fp
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug)]
 pub struct ECDSAInput {
     pub r: Fq,
     pub s: Fq,
     pub msghash: Fq,
     pub x: Fp,
     pub y: Fp,
+}
+
+impl Default for ECDSAInput {
+    fn default() -> Self {
+        let g = Secp256r1Affine::generator();
+        let r = Fq::from_bytes(&g.x.to_bytes()).unwrap();
+        Self {
+            r,
+            s: r + Fq::one(),
+            msghash: Fq::one(),
+            x: g.x,
+            y: g.y,
+        }
+    }
 }
 
 impl ECDSAInput {
@@ -60,9 +74,9 @@ impl ECDSAInput {
     }
 
     pub fn try_from_hex(msghash: &str, signature: &str, pubkey: &str) -> Result<Self> {
-        let msghash = hex::decode(msghash)?;
-        let signature = hex::decode(signature)?;
-        let pubkey = hex::decode(pubkey)?;
+        let msghash = hex::decode(&msghash[2..])?;
+        let signature = hex::decode(&signature[2..])?;
+        let pubkey = hex::decode(&pubkey[2..])?;
 
         let (r, s) = (signature.len() == 64)
             .then(|| signature.split_at(32))

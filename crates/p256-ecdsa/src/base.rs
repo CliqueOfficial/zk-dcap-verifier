@@ -94,6 +94,8 @@ pub struct ECDSAProver {
 
 impl ECDSAProver {
     const INSTANCES_LEN: usize = 15;
+    const DEGREE: u32 = 21u32;
+    const BATCH_SIZE: usize = 4usize;
 
     fn read_pinning() -> Option<(BaseCircuitParams, MultiPhaseThreadBreakPoints)> {
         if let Ok(f) = std::fs::File::open("params/pinning.json") {
@@ -127,8 +129,8 @@ impl ECDSAProver {
     }
 
     pub fn keygen() -> Result<()> {
-        let params = gen_srs(18);
-        let input = ECDSAInput::default();
+        let params = gen_srs(Self::DEGREE);
+        let input = vec![ECDSAInput::default(); Self::BATCH_SIZE];
         let pre_circuit = PreCircuit {
             private_inputs: input,
             f: ecdsa_verify,
@@ -173,9 +175,13 @@ impl ECDSAProver {
         }
     }
 
-    pub fn create_proof(&self, input: ECDSAInput, evm: bool) -> Result<Vec<u8>> {
+    pub fn create_proof(&self, input: Vec<ECDSAInput>, evm: bool) -> Result<Vec<u8>> {
+        // Extend `input` to BATCH_SIZE
+        let input = [input, vec![ECDSAInput::default(); 4]].concat();
+        let input = input[..4].to_vec();
+
         let pre_circuit = PreCircuit {
-            private_inputs: input,
+            private_inputs: input.clone(),
             f: ecdsa_verify,
         };
 
@@ -184,7 +190,10 @@ impl ECDSAProver {
             Some(self.pinning.clone()),
             &self.params,
         )?;
-        let instances = input.as_instances();
+        let instances = input
+            .iter()
+            .flat_map(|input| input.as_instances())
+            .collect::<Vec<_>>();
 
         let proof = if evm {
             snark_verifier_sdk::evm::gen_evm_proof_shplonk(
@@ -248,7 +257,7 @@ impl ECDSAProver {
         let protocol = compile(
             &self.params,
             self.pk.get_vk(),
-            Config::kzg().with_num_instance(vec![Self::INSTANCES_LEN]),
+            Config::kzg().with_num_instance(vec![Self::INSTANCES_LEN * Self::BATCH_SIZE]),
         );
 
         let vk = (self.params.get_g()[0], self.params.g2(), self.params.s_g2()).into();
@@ -257,7 +266,7 @@ impl ECDSAProver {
         let protocol = protocol.loaded(&loader);
         let mut transcript = EvmTranscript::<_, Rc<EvmLoader>, _, _>::new(&loader);
 
-        let instances = transcript.load_instances(vec![Self::INSTANCES_LEN]);
+        let instances = transcript.load_instances(vec![Self::INSTANCES_LEN * Self::BATCH_SIZE]);
         let proof =
             PlonkVerifier::<SHPLONK>::read_proof(&vk, &protocol, &instances, &mut transcript)
                 .map_err(|e| anyhow::anyhow!("{:?}", e))?;
@@ -288,9 +297,9 @@ mod tests {
 
     #[test]
     fn test_p256_ecdsa() {
-        let msghash = "9c8adb93585642008f6defe84b014d3db86e65ec158f32c1fe8b78974123c264";
-        let signature = "89e7242b7a0be99f7c668a8bdbc1fcaf6fa7562dd28538dbab4b059e9d6955c2c434593d3ccb0e7e5825effb14e251e6e5efb738d6042647ed2e2faac9191718";
-        let pubkey = "04cd8fdae57e9fcc6638b7e0bdf1cfe6eb4783c29ed13916f10c121c70b7173dd61291422f9ef68a1b6a7e9cccbe7cc2c0738f81a996f7e62e9094c1f80bc0d788";
+        let msghash = "0x9c8adb93585642008f6defe84b014d3db86e65ec158f32c1fe8b78974123c264";
+        let signature = "0x89e7242b7a0be99f7c668a8bdbc1fcaf6fa7562dd28538dbab4b059e9d6955c2c434593d3ccb0e7e5825effb14e251e6e5efb738d6042647ed2e2faac9191718";
+        let pubkey = "0x04cd8fdae57e9fcc6638b7e0bdf1cfe6eb4783c29ed13916f10c121c70b7173dd61291422f9ef68a1b6a7e9cccbe7cc2c0738f81a996f7e62e9094c1f80bc0d788";
 
         {
             let pubkey = hex::decode(pubkey).unwrap();
@@ -303,7 +312,11 @@ mod tests {
 
         let input = ECDSAInput::try_from_hex(msghash, signature, pubkey).unwrap();
         let prover = ECDSAProver::default();
-        prover.create_proof(input, false).unwrap();
-        prover.create_proof(input, true).unwrap();
+        prover
+            .create_proof(vec![input, input, input, input], false)
+            .unwrap();
+        prover
+            .create_proof(vec![input, input, input, input], true)
+            .unwrap();
     }
 }

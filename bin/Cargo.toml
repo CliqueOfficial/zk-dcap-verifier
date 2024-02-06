@@ -12,6 +12,7 @@ p256-ecdsa = { path = "../crates/p256-ecdsa" }
 hex = "0.4.3"
 anyhow = "1.0.79"
 common = { path = "../crates/common/" }
+serde = { version = "1.0.196", features = ["derive"] }
 
 [build-dependencies]
 p256-ecdsa = { path = "../crates/p256-ecdsa" }

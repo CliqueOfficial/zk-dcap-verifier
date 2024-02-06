@@ -1,3 +1,5 @@
+mod types;
+
 use std::{io::BufReader, path::PathBuf};
 
 use anyhow::{anyhow, Result};
@@ -27,6 +29,7 @@ use common::{
 };
 use p256_ecdsa::{ECDSAInput, ECDSAProver};
 use structopt::StructOpt;
+use types::ECDSAInputPayload;
 
 #[derive(Debug, StructOpt)]
 #[structopt(name = "zk-clique", about = "ZK-Clique commands")]
@@ -48,11 +51,7 @@ enum P256Ecdsa {
     #[structopt(about = "Verify a hex-encoded proof with 0x prefix based on given input")]
     Verify {
         #[structopt(long)]
-        msghash: String,
-        #[structopt(long)]
-        signature: String,
-        #[structopt(long)]
-        pubkey: String,
+        params: String,
         #[structopt(long)]
         evm: bool,
         #[structopt(long)]
@@ -61,11 +60,7 @@ enum P256Ecdsa {
     #[structopt(about = "Create a hex-encoded proof with 0x prefix based on given input")]
     Prove {
         #[structopt(long)]
-        msghash: String,
-        #[structopt(long)]
-        signature: String,
-        #[structopt(long)]
-        pubkey: String,
+        params: String,
         #[structopt(long)]
         evm: bool,
         #[structopt(
@@ -89,11 +84,7 @@ enum P256Ecdsa {
     #[structopt(about = "Encode instances and proof as evm calldata")]
     GenCalldata {
         #[structopt(long)]
-        msghash: String,
-        #[structopt(long)]
-        signature: String,
-        #[structopt(long)]
-        pubkey: String,
+        params: String,
         #[structopt(long)]
         proof: String,
         #[structopt(
@@ -108,49 +99,51 @@ enum P256Ecdsa {
 }
 
 impl P256Ecdsa {
-    fn read_raw_or_file(raw: String) -> String {
+    fn read_proof(raw: String) -> String {
         let raw = raw.trim();
-        let is_literal = raw.starts_with("0x");
-        if is_literal {
-            raw[2..].into()
-        } else {
-            let p = PathBuf::from(&raw);
-            std::fs::read_to_string(p).unwrap()
+        match raw.starts_with("0x") {
+            true => raw[2..].into(),
+            false => {
+                let p = PathBuf::from(&raw);
+                let raw = std::fs::read_to_string(p).unwrap();
+                raw[2..].into()
+            }
         }
     }
+
+    fn read_params(raw: String) -> Vec<ECDSAInput> {
+        if let Ok(r) = serde_json::from_str::<Vec<ECDSAInputPayload>>(&raw) {
+            return r.into_iter().map(Into::into).collect::<Vec<_>>();
+        }
+
+        let p = PathBuf::from(&raw);
+        let raw = std::fs::read_to_string(p).unwrap();
+        let r: Vec<ECDSAInputPayload> = serde_json::from_str(&raw).unwrap();
+        r.into_iter().map(Into::into).collect::<Vec<_>>()
+    }
+
     fn run(self) -> Result<()> {
         match self {
-            Self::Verify {
-                msghash,
-                signature,
-                pubkey,
-                proof,
-                evm,
-            } => {
-                let [msghash, signature, pubkey, proof] =
-                    [msghash, signature, pubkey, proof].map(Self::read_raw_or_file);
-
-                let input = ECDSAInput::try_from_hex(&msghash, &signature, &pubkey)?;
+            Self::Verify { params, proof, evm } => {
+                let params = Self::read_params(params);
+                let proof = Self::read_proof(proof);
 
                 println!(
                     "{}",
-                    Self::inner_verify_proof(&hex::decode(&proof)?, input, evm)
+                    Self::inner_verify_proof(&hex::decode(&proof)?, params, evm)
                 );
                 Ok(())
             }
 
             Self::Prove {
-                msghash,
-                signature,
-                pubkey,
+                params,
                 output,
                 evm,
             } => {
-                let [msghash, signature, pubkey] =
-                    [msghash, signature, pubkey].map(Self::read_raw_or_file);
-                let input = ECDSAInput::try_from_hex(&msghash, &signature, &pubkey)?;
+                let params = Self::read_params(params);
+
                 let prover = ECDSAProver::new(Self::pk(), Self::params(), Self::pinning());
-                let proof = ["0x", &hex::encode(prover.create_proof(input, evm)?)].concat();
+                let proof = ["0x", &hex::encode(prover.create_proof(params, evm)?)].concat();
                 if let Some(output) = output {
                     std::fs::write(output, proof.as_bytes())?;
                 } else {
@@ -159,16 +152,15 @@ impl P256Ecdsa {
                 Ok(())
             }
             Self::GenCalldata {
-                msghash,
-                signature,
-                pubkey,
+                params,
                 output,
                 proof,
             } => {
-                let [msghash, signature, pubkey, proof] =
-                    [msghash, signature, pubkey, proof].map(Self::read_raw_or_file);
-                let input = ECDSAInput::try_from_hex(&msghash, &signature, &pubkey)?;
-                let calldata = encode_calldata(&[input.as_instances()], &hex::decode(&proof)?);
+                let params = Self::read_params(params);
+                let proof = Self::read_proof(proof);
+                let instances: Vec<_> = params.iter().flat_map(|v| v.as_instances()).collect();
+
+                let calldata = encode_calldata(&[instances], &hex::decode(&proof)?);
                 let calldata = ["0x", &hex::encode(calldata)].concat();
                 if let Some(output) = output {
                     std::fs::write(output, calldata.as_bytes())?;
@@ -225,16 +217,18 @@ impl P256Ecdsa {
     }
 
     fn params() -> ParamsKZG<Bn256> {
-        let raw = std::fs::read("./params/kzg_bn254_18.srs").unwrap();
+        let (params, _) = Self::pinning();
+        let raw = std::fs::read(format!("./params/kzg_bn254_{}.srs", params.k)).unwrap();
         let mut reader = BufReader::new(raw.as_slice());
         ParamsKZG::<Bn256>::read(&mut reader).unwrap()
     }
 
-    fn inner_verify_proof(proof: &[u8], input: ECDSAInput, evm: bool) -> bool {
+    fn inner_verify_proof(proof: &[u8], input: Vec<ECDSAInput>, evm: bool) -> bool {
+        let instances: Vec<_> = input.iter().flat_map(|v| v.as_instances()).collect();
         if evm {
             let sol = Self::gen_evm_verifier().unwrap();
             let bytecode = compile_solidity(&sol);
-            let calldata = encode_calldata(&[input.as_instances()], proof);
+            let calldata = encode_calldata(&[instances], proof);
             snark_verifier::loader::evm::deploy_and_call(bytecode, calldata).is_ok()
         } else {
             let vk = Self::vk();
@@ -245,7 +239,7 @@ impl P256Ecdsa {
                 params.verifier_params(),
                 &vk,
                 SingleStrategy::new(&params),
-                &[&[input.as_instances().as_slice()]],
+                &[&[instances.as_slice()]],
                 &mut transcript,
             )
             .is_ok()
@@ -266,14 +260,34 @@ fn main() -> Result<()> {
 mod tests {
     use super::*;
 
+    const PARAMS: &str = include_str!("../assets/params.json");
+
     #[test]
-    fn test_cli_verify() -> Result<()> {
+    fn test_cli_prove() -> Result<()> {
+        let cli = P256Ecdsa::Prove {
+            params: PARAMS.into(),
+            evm: true,
+            output: None,
+        };
+        cli.run()
+    }
+
+    #[test]
+    fn test_cli_verify_native() -> Result<()> {
         let cli = P256Ecdsa::Verify {
-            msghash: "0x9c8adb93585642008f6defe84b014d3db86e65ec158f32c1fe8b78974123c264".into(), 
-            signature: "0x89e7242b7a0be99f7c668a8bdbc1fcaf6fa7562dd28538dbab4b059e9d6955c2c434593d3ccb0e7e5825effb14e251e6e5efb738d6042647ed2e2faac9191718".into(), 
-            pubkey: "0x04cd8fdae57e9fcc6638b7e0bdf1cfe6eb4783c29ed13916f10c121c70b7173dd61291422f9ef68a1b6a7e9cccbe7cc2c0738f81a996f7e62e9094c1f80bc0d788".into(), 
-            proof: include_str!("../assets/proof.bin").into(),
+            params: PARAMS.into(),
+            proof: include_str!("../assets/proof_native.bin").into(),
             evm: false,
+        };
+        cli.run()
+    }
+
+    #[test]
+    fn test_cli_verify_evm() -> Result<()> {
+        let cli = P256Ecdsa::Verify {
+            params: PARAMS.into(),
+            proof: include_str!("../assets/proof_evm.bin").into(),
+            evm: true,
         };
         cli.run()
     }
