@@ -134,7 +134,7 @@ impl P256Ecdsa {
 
                 println!(
                     "{}",
-                    Self::inner_verify_proof(&hex::decode(&proof[2..])?, input, evm)
+                    Self::inner_verify_proof(&hex::decode(&proof)?, input, evm)
                 );
                 Ok(())
             }
@@ -168,7 +168,7 @@ impl P256Ecdsa {
                 let [msghash, signature, pubkey, proof] =
                     [msghash, signature, pubkey, proof].map(Self::read_raw_or_file);
                 let input = ECDSAInput::try_from_hex(&msghash, &signature, &pubkey)?;
-                let calldata = encode_calldata(&[input.as_instances()], &hex::decode(&proof[2..])?);
+                let calldata = encode_calldata(&[input.as_instances()], &hex::decode(&proof)?);
                 let calldata = ["0x", &hex::encode(calldata)].concat();
                 if let Some(output) = output {
                     std::fs::write(output, calldata.as_bytes())?;
