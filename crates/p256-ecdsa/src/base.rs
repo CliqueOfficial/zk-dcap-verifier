@@ -302,9 +302,9 @@ mod tests {
         let pubkey = "0x04cd8fdae57e9fcc6638b7e0bdf1cfe6eb4783c29ed13916f10c121c70b7173dd61291422f9ef68a1b6a7e9cccbe7cc2c0738f81a996f7e62e9094c1f80bc0d788";
 
         {
-            let pubkey = hex::decode(pubkey).unwrap();
-            let signature = hex::decode(signature).unwrap();
-            let msghash = hex::decode(msghash).unwrap();
+            let pubkey = hex::decode(&pubkey[2..]).unwrap();
+            let signature = hex::decode(&signature[2..]).unwrap();
+            let msghash = hex::decode(&msghash[2..]).unwrap();
             let vk = VerifyingKey::from_sec1_bytes(&pubkey).unwrap();
             let signature = Signature::from_slice(&signature).unwrap();
             vk.verify_prehash(&msghash, &signature).unwrap();
