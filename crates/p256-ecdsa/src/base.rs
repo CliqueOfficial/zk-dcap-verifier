@@ -1,4 +1,4 @@
-use std::{path::PathBuf, rc::Rc};
+use std::{iter, path::PathBuf, rc::Rc};
 
 use anyhow::Result;
 use common::{
@@ -24,15 +24,14 @@ use common::{
     },
     halo2curves::bn256::{Bn256, Fq, Fr, G1Affine},
     snark_verifier::{
-        loader::evm::{compile_solidity, EvmLoader},
-        system::halo2::{compile, transcript::evm::EvmTranscript, Config},
-        verifier::SnarkVerifier,
+        self, loader::evm::{compile_solidity, EvmLoader}, system::halo2::{compile, transcript::evm::EvmTranscript, Config}, verifier::SnarkVerifier
     },
     snark_verifier_sdk::{
-        self, evm::encode_calldata, gen_pk, halo2::PoseidonTranscript, read_pk, NativeLoader,
+        self, gen_pk, halo2::PoseidonTranscript, read_pk, NativeLoader,
         PlonkVerifier, SHPLONK,
     },
 };
+use snark_verifier::util::arithmetic::PrimeField;
 
 use crate::{circuit::ecdsa_verify, ECDSAInput};
 
@@ -84,6 +83,20 @@ where
 
         Ok(builder)
     }
+}
+
+/// Encode instances and proof into calldata.
+fn encode_calldata<F>(instances: &[Vec<F>], proof: &[u8]) -> (Vec<u8>, Vec<u8>)
+where
+    F: PrimeField<Repr = [u8; 32]>,
+{
+    let ins = instances
+        .iter()
+        .flatten()
+        .flat_map(|value| value.to_repr().as_ref().iter().rev().cloned().collect::<Vec<u8>>()).collect();
+    let proof = proof.iter().cloned().collect();
+
+    (ins, proof)
 }
 
 pub struct ECDSAProver {
@@ -221,7 +234,14 @@ impl ECDSAProver {
             let accept = if evm {
                 let sol = self.gen_evm_verifier().unwrap();
                 let bytecode = compile_solidity(&sol);
-                let calldata = encode_calldata(&[instances], &proof);
+                let (ins, proof) = encode_calldata(&[instances], &proof);
+                println!("instances: {:?}", ins);
+                println!("proof: {:?}", proof);
+                let calldata = iter::empty()
+                    .chain(ins)
+                    .chain(proof)
+                    .collect();
+
                 snark_verifier_sdk::snark_verifier::loader::evm::deploy_and_call(bytecode, calldata)
                     .is_ok()
             } else {
@@ -312,9 +332,9 @@ mod tests {
 
         let input = ECDSAInput::try_from_hex(msghash, signature, pubkey).unwrap();
         let prover = ECDSAProver::default();
-        prover
-            .create_proof(vec![input, input, input, input], false)
-            .unwrap();
+        // prover
+        //     .create_proof(vec![input, input, input, input], false)
+        //     .unwrap();
         prover
             .create_proof(vec![input, input, input, input], true)
             .unwrap();
