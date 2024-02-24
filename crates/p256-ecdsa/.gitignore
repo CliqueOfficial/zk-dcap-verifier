@@ -1,1 +1,3 @@
 *.bin
+verifier.sol
+proof_calldata.bin

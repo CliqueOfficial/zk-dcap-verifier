@@ -1,4 +1,4 @@
-use std::{iter, path::PathBuf, rc::Rc};
+use std::{fs::File, io::Write, iter, path::PathBuf, rc::Rc};
 
 use anyhow::Result;
 use common::{
@@ -233,15 +233,21 @@ impl ECDSAProver {
         {
             let accept = if evm {
                 let sol = self.gen_evm_verifier().unwrap();
+                let mut f = File::create("verifier.sol").unwrap();
+                let _ = f.write(sol.as_bytes());
+
                 let bytecode = compile_solidity(&sol);
                 let (ins, proof) = encode_calldata(&[instances], &proof);
                 println!("instances: {:?}", ins);
                 println!("proof: {:?}", proof);
-                let calldata = iter::empty()
+                let mut f = File::create("proof_calldata.bin").unwrap();
+                let _ = f.write(&proof);
+
+                let calldata: Vec<u8> = iter::empty()
                     .chain(ins)
                     .chain(proof)
                     .collect();
-
+                
                 snark_verifier_sdk::snark_verifier::loader::evm::deploy_and_call(bytecode, calldata)
                     .is_ok()
             } else {
