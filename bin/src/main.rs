@@ -28,17 +28,22 @@ use common::{
 use p256_ecdsa::{ECDSAInput, ECDSAProver};
 use structopt::StructOpt;
 
+mod dcap;
+mod utils;
+
 #[derive(Debug, StructOpt)]
 #[structopt(name = "zk-clique", about = "ZK-Clique commands")]
 enum Cli {
     #[structopt(about = "p256-ecdsa commands")]
     P256Ecdsa(P256Ecdsa),
+    Dcap(dcap::Dcap),
 }
 
 impl Cli {
-    pub fn run(self) -> Result<()> {
+    pub async fn run(self) -> Result<()> {
         match self {
             Self::P256Ecdsa(cmd) => cmd.run(),
+            Self::Dcap(cmd) => Ok(cmd.run().await.unwrap()),
         }
     }
 }
@@ -253,13 +258,14 @@ impl P256Ecdsa {
     }
 }
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     let cli = Cli::from_args();
     let params = std::path::PathBuf::from("./params");
     if !params.exists() {
         return Err(anyhow!("You may forget to download params or run `setup` first. If it doesn't work, please remove `params` directory and try again."));
     }
-    cli.run()
+    cli.run().await
 }
 
 #[cfg(test)]
