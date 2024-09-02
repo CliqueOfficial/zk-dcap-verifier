@@ -249,6 +249,13 @@ pub struct SgxDcapVerifierCircuit<F: PrimeField> {
 }
 
 impl<F: PrimeField> SgxDcapVerifierCircuit<F> {
+    pub fn new(sgx_dcap_verifier_encoded_string: Vec<u8>) -> Self {
+        Self {
+            sgx_dcap_verifier_encoded_string,
+            _marker: PhantomData,
+        }
+    }
+
     // Note that the two types of region.assign_advice calls happen together so that it is the same region
     fn sgx_dcap_verifier_assign_values(
         &self,
@@ -337,7 +344,7 @@ impl<F: PrimeField> Circuit<F> for SgxDcapVerifierCircuit<F> {
     fn configure(meta: &mut ConstraintSystem<F>) -> Self::Config {
         // let encoded_chars = meta.advice_column();
         // TODO Set an offset to encoded_chars
-        
+
         SgxDcapVerifierConfig::configure(meta)
     }
 
