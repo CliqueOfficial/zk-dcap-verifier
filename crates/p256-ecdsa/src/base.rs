@@ -175,6 +175,14 @@ impl ECDSAProver {
         }
     }
 
+    pub fn encode_calldata(&self, input: Vec<ECDSAInput>, proof: Vec<u8>) -> Vec<u8> {
+        let instances = input
+            .iter()
+            .flat_map(|input| input.as_instances())
+            .collect::<Vec<_>>();
+        encode_calldata(&[instances], &proof)
+    }
+
     pub fn create_proof(&self, input: Vec<ECDSAInput>, evm: bool) -> Result<Vec<u8>> {
         // Extend `input` to BATCH_SIZE
         let input = [input, vec![ECDSAInput::default(); 4]].concat();
