@@ -90,6 +90,19 @@ impl ECDSAInput {
         ECDSAInput::new(&msghash, r, s, x, y)
     }
 
+    pub fn try_from_bytes(msghash: &[u8], signature: &[u8], pubkey: &[u8]) -> Result<Self> {
+        let (r, s) = (signature.len() == 64)
+            .then(|| signature.split_at(32))
+            .ok_or(anyhow!("signature should be 64 bytes"))?;
+
+        let (x, y) = (pubkey.len() == 65)
+            .then(|| &pubkey[1..])
+            .map(|v| v.split_at(32))
+            .ok_or(anyhow!("Pubkey should be uncompressed format"))?;
+
+        ECDSAInput::new(msghash, r, s, x, y)
+    }
+
     pub fn as_instances(&self) -> Vec<Fr> {
         const LIMB_BITS: usize = 88;
         const NUM_LIMBS: usize = 3;

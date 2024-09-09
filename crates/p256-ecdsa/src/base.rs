@@ -111,7 +111,7 @@ impl ECDSAProver {
         None
     }
 
-    fn from_files() -> Option<Self> {
+    pub fn from_files() -> Option<Self> {
         if let Some(pinning) = Self::read_pinning() {
             let params = gen_srs(pinning.0.k as u32);
             if let Ok(pk) = read_pk::<BaseCircuitBuilder<Fr>>(
